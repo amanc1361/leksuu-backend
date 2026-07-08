@@ -4,8 +4,6 @@ WORKDIR /src
 RUN apk add --no-cache git
 # GOPROXY is overridable for restricted networks (e.g. an Iranian Go proxy):
 #   docker compose build --build-arg GOPROXY=https://goproxy.cn,direct
-ARG GOPROXY=https://proxy.golang.org,direct
-ENV GOPROXY=${GOPROXY}
 COPY . .
 # Production uses the pgx adapter (build tag `pgx`). Resolving it here also
 # generates go.sum on first build (the default build is dependency-free).
