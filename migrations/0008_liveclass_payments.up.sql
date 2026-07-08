@@ -1,0 +1,11 @@
+-- 0008 — (superseded; intentionally a no-op)
+-- The original 1:1 live-class marketplace + payments tables once defined here
+-- (teachers, teacher_availability, class_sessions, payments, bookings) were
+-- replaced by later migrations and conflicted with them on a fresh database:
+--   • payments / subscriptions / daily_usage  → 0021_billing
+--   • tutor marketplace (tutors, tutor_bookings) → 0025_tutors and later
+--   • group class_sessions / class_enrollments → 0028_class_sessions
+-- None of the old tables are used by the current code, so they are no longer
+-- created here. This file is kept (as a no-op) so migration version numbering
+-- stays stable.
+SELECT 1;

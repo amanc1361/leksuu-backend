@@ -1,0 +1,214 @@
+package usecase
+
+import (
+	"context"
+	"math"
+	"testing"
+	"time"
+
+	"github.com/leksuu/platform/internal/modules/srs/domain"
+	"github.com/leksuu/platform/internal/modules/srs/repo"
+)
+
+var schedClock = time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+
+func TestRescheduleGoodProgression(t *testing.T) {
+	// A fresh card graduated with successive "good": 1 -> 6 -> round(6*ease).
+	in := domain.SchedInput{IntervalDays: 0, Reps: 0, Ease: domain.EaseDefault}
+	r1 := domain.Reschedule(in, domain.GradeGood, schedClock)
+	if r1.IntervalDays != 1 || r1.Reps != 1 {
+		t.Fatalf("first good: iv=%d reps=%d, want 1/1", r1.IntervalDays, r1.Reps)
+	}
+	r2 := domain.Reschedule(domain.SchedInput{IntervalDays: r1.IntervalDays, Reps: r1.Reps, Ease: r1.Ease}, domain.GradeGood, schedClock)
+	if r2.IntervalDays != 6 || r2.Reps != 2 {
+		t.Fatalf("second good: iv=%d reps=%d, want 6/2", r2.IntervalDays, r2.Reps)
+	}
+	r3 := domain.Reschedule(domain.SchedInput{IntervalDays: r2.IntervalDays, Reps: r2.Reps, Ease: r2.Ease}, domain.GradeGood, schedClock)
+	want := 15 // round(6 * 2.5)
+	if r3.IntervalDays != want {
+		t.Fatalf("third good: iv=%d, want %d", r3.IntervalDays, want)
+	}
+	if !r3.Due.Equal(schedClock.AddDate(0, 0, want)) {
+		t.Fatalf("third good due=%v", r3.Due)
+	}
+}
+
+func TestRescheduleAgainLapses(t *testing.T) {
+	in := domain.SchedInput{IntervalDays: 30, Reps: 5, Lapses: 1, Ease: 2.5}
+	r := domain.Reschedule(in, domain.GradeAgain, schedClock)
+	if r.IntervalDays != 0 {
+		t.Fatalf("again interval=%d, want 0", r.IntervalDays)
+	}
+	if r.Reps != 0 {
+		t.Fatalf("again reps=%d, want reset to 0", r.Reps)
+	}
+	if r.Lapses != 2 {
+		t.Fatalf("again lapses=%d, want 2", r.Lapses)
+	}
+	if r.Ease >= 2.5 {
+		t.Fatalf("again ease=%.2f, want lower than 2.5", r.Ease)
+	}
+	if !r.Due.After(schedClock) || r.Due.After(schedClock.Add(time.Hour)) {
+		t.Fatalf("again due=%v, want within the hour", r.Due)
+	}
+}
+
+func TestRescheduleHardAndEasyModifiers(t *testing.T) {
+	base := domain.SchedInput{IntervalDays: 10, Reps: 3, Ease: 2.5}
+	hard := domain.Reschedule(base, domain.GradeHard, schedClock)
+	if hard.IntervalDays != 12 { // round(10*1.2)
+		t.Fatalf("hard iv=%d, want 12", hard.IntervalDays)
+	}
+	if hard.Ease >= 2.5 {
+		t.Fatalf("hard should lower ease, got %.2f", hard.Ease)
+	}
+	easy := domain.Reschedule(base, domain.GradeEasy, schedClock)
+	good := domain.Reschedule(base, domain.GradeGood, schedClock)
+	if !(easy.IntervalDays > good.IntervalDays && good.IntervalDays > hard.IntervalDays) {
+		t.Fatalf("ordering broken: hard=%d good=%d easy=%d", hard.IntervalDays, good.IntervalDays, easy.IntervalDays)
+	}
+	if easy.Ease <= 2.5 {
+		t.Fatalf("easy should raise ease, got %.2f", easy.Ease)
+	}
+}
+
+func TestEaseFloorAndCap(t *testing.T) {
+	// Repeated "again" must never drop ease below the floor.
+	e := domain.EaseDefault
+	for i := 0; i < 20; i++ {
+		e = domain.Reschedule(domain.SchedInput{IntervalDays: 5, Ease: e}, domain.GradeAgain, schedClock).Ease
+	}
+	if e < domain.EaseMin-1e-9 {
+		t.Fatalf("ease floor breached: %.3f < %.3f", e, domain.EaseMin)
+	}
+	// Repeated "easy" must never exceed the cap.
+	e = domain.EaseDefault
+	for i := 0; i < 20; i++ {
+		e = domain.Reschedule(domain.SchedInput{IntervalDays: 5, Ease: e}, domain.GradeEasy, schedClock).Ease
+	}
+	if e > domain.EaseMax+1e-9 {
+		t.Fatalf("ease cap breached: %.3f > %.3f", e, domain.EaseMax)
+	}
+}
+
+func TestMaxIntervalCap(t *testing.T) {
+	r := domain.Reschedule(domain.SchedInput{IntervalDays: 10000, Reps: 9, Ease: 3.0}, domain.GradeEasy, schedClock)
+	if r.IntervalDays > domain.MaxInterval {
+		t.Fatalf("interval %d exceeds cap %d", r.IntervalDays, domain.MaxInterval)
+	}
+}
+
+func TestPreviewIntervals(t *testing.T) {
+	in := domain.SchedInput{IntervalDays: 10, Reps: 3, Ease: 2.5}
+	p := domain.PreviewIntervals(in, schedClock)
+	for _, g := range []string{"again", "hard", "good", "easy"} {
+		if _, ok := p[g]; !ok {
+			t.Fatalf("preview missing grade %q", g)
+		}
+	}
+	if p["again"] != 0 {
+		t.Fatalf("again preview=%d, want 0", p["again"])
+	}
+	if !(p["easy"] >= p["good"] && p["good"] >= p["hard"]) {
+		t.Fatalf("preview ordering broken: %+v", p)
+	}
+}
+
+func TestZeroEaseDefaults(t *testing.T) {
+	// A card with an uninitialized ease should behave as if ease=default.
+	r := domain.Reschedule(domain.SchedInput{IntervalDays: 6, Reps: 2, Ease: 0}, domain.GradeGood, schedClock)
+	want := 15 // round(6 * 2.5)
+	if math.Abs(float64(r.IntervalDays-want)) > 0 {
+		t.Fatalf("zero-ease good iv=%d, want %d", r.IntervalDays, want)
+	}
+}
+
+func TestUndoRestoresScheduleOnce(t *testing.T) {
+	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	r := repo.NewMemorySRSRepo()
+	svc := NewService(r, nil, func() time.Time { return now })
+	ctx := context.Background()
+
+	c, err := svc.AddCard(ctx, "u1", AddInput{Language: "en", Lemma: "ephemeral", Meaning: map[string]string{"fa": "x"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, _ := r.Card(ctx, "u1", c.ID)
+
+	if _, err := svc.Review(ctx, "u1", c.ID, domain.GradeGood); err != nil {
+		t.Fatal(err)
+	}
+	mid, _ := r.Card(ctx, "u1", c.ID)
+	if mid.DueAt.Equal(before.DueAt) {
+		t.Fatal("review should move the due date")
+	}
+
+	got, err := svc.Undo(ctx, "u1", c.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.DueAt.Equal(before.DueAt) || got.Reps != before.Reps || got.IntervalDays != before.IntervalDays || got.Ease != before.Ease {
+		t.Fatalf("undo mismatch: got %+v want %+v", got, before)
+	}
+	// One level only.
+	if _, err := svc.Undo(ctx, "u1", c.ID); err == nil {
+		t.Fatal("second undo must fail")
+	}
+	// Ownership.
+	if _, err := svc.Undo(ctx, "intruder", c.ID); err == nil {
+		t.Fatal("foreign undo must fail")
+	}
+}
+
+func TestWordManagerListSuspendDelete(t *testing.T) {
+	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	r := repo.NewMemorySRSRepo()
+	svc := NewService(r, nil, func() time.Time { return now })
+	ctx := context.Background()
+
+	a, _ := svc.AddCard(ctx, "u1", AddInput{Language: "en", Lemma: "apple", Meaning: map[string]string{"fa": "سیب"}})
+	b, _ := svc.AddCard(ctx, "u1", AddInput{Language: "en", Lemma: "banana", Meaning: map[string]string{"fa": "موز"}})
+	_, _ = svc.AddCard(ctx, "intruder", AddInput{Language: "en", Lemma: "apricot", Meaning: map[string]string{"fa": "x"}})
+
+	all, err := svc.MyCards(ctx, "u1", "", "", 50, 0)
+	if err != nil || len(all) != 2 {
+		t.Fatalf("all=%d err=%v, want 2 (ownership)", len(all), err)
+	}
+	got, _ := svc.MyCards(ctx, "u1", "app", "", 50, 0)
+	if len(got) != 1 || got[0].Lemma != "apple" {
+		t.Fatalf("query filter wrong: %+v", got)
+	}
+
+	// Manual suspend preserves the schedule; the card leaves "active".
+	if _, err := svc.Suspend(ctx, "u1", a.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	act, _ := svc.MyCards(ctx, "u1", "", "active", 50, 0)
+	sus, _ := svc.MyCards(ctx, "u1", "", "suspended", 50, 0)
+	if len(act) != 1 || len(sus) != 1 || sus[0].CardID != a.ID {
+		t.Fatalf("status filters wrong: act=%d sus=%d", len(act), len(sus))
+	}
+	// Suspended cards never show up as due.
+	due, _ := svc.Due(ctx, "u1", "en", 10)
+	for _, d := range due {
+		if d.CardID == a.ID {
+			t.Fatal("suspended card must not be due")
+		}
+	}
+	// Resume keeps the schedule (still due now, box unchanged).
+	if _, err := svc.Suspend(ctx, "u1", a.ID, false); err != nil {
+		t.Fatal(err)
+	}
+
+	// Delete: ownership enforced; gone afterwards.
+	if err := svc.DeleteCard(ctx, "intruder", b.ID); err == nil {
+		t.Fatal("foreign delete must fail")
+	}
+	if err := svc.DeleteCard(ctx, "u1", b.ID); err != nil {
+		t.Fatal(err)
+	}
+	left, _ := svc.MyCards(ctx, "u1", "", "", 50, 0)
+	if len(left) != 1 {
+		t.Fatalf("after delete: %d, want 1", len(left))
+	}
+}

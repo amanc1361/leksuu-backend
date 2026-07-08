@@ -1,0 +1,2 @@
+DROP INDEX IF EXISTS idx_tutors_user;
+ALTER TABLE tutors DROP COLUMN IF EXISTS user_id;
