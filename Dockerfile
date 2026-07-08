@@ -1,7 +1,7 @@
 # ---- build stage: compile the API and migrator with the PostgreSQL adapter ----
 FROM golang:1.26-alpine AS build
-# ARG GOPROXY=https://proxy.golang.org,direct
-# ENV GOPROXY=${GOPROXY}
+ENV GOPROXY=https://goproxy.io,https://goproxy.cn,direct
+ENV GOSUMDB=off
 WORKDIR /src
 RUN apk add --no-cache git
 # GOPROXY is overridable for restricted networks (e.g. an Iranian Go proxy):
