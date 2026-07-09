@@ -91,7 +91,7 @@ func Load() Config {
 		BillingCallbackURL:     env("BILLING_CALLBACK_URL", "http://localhost:8080/api/v1/billing/callback"),
 		BillingSuccessURL:      env("BILLING_SUCCESS_URL", "http://localhost:3000/fa/billing/success"),
 		BillingFailURL:         env("BILLING_FAIL_URL", "http://localhost:3000/fa/billing/fail"),
-		CORSOrigin:             env("CORS_ORIGIN", "http://localhost:3000"),
+		CORSOrigin:             env("CORS_ORIGIN", "*"),
 		AdminEmails:            splitList(env("ADMIN_EMAILS", "admin@leksuu.app")),
 		AdminPassword:          env("ADMIN_PASSWORD", "leksuu-admin"),
 		AccessTTL:              15 * time.Minute,
