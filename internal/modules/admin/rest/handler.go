@@ -105,7 +105,11 @@ func (h *Handler) ListUnitLessons(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]map[string]any, 0, len(lessons))
 	for _, l := range lessons {
-		out = append(out, map[string]any{"id": l.ID, "position": l.Position, "title": l.Title, "unit_id": l.UnitID})
+		entry := map[string]any{"id": l.ID, "position": l.Position, "title": l.Title, "unit_id": l.UnitID, "focus": l.Focus}
+		if len(l.Objective) > 0 {
+			entry["objective"] = json.RawMessage(l.Objective)
+		}
+		out = append(out, entry)
 	}
 	web.JSON(w, http.StatusOK, map[string]any{"lessons": out})
 }
