@@ -314,7 +314,7 @@ func New(cfg config.Config) (*App, error) {
 
 	return &App{
 		cfg:          cfg,
-		server:       httpserver.New(":"+cfg.HTTPPort, web.CORS(cfg.CORSOrigin, mux)),
+		server:       httpserver.New(":"+cfg.HTTPPort, web.CORS(cfg.CORSOrigins, mux)),
 		cleanup:      cleanup,
 		log:          log,
 		scheduler:    remindScheduler,

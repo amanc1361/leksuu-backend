@@ -1,14 +1,29 @@
 package web
 
-import "net/http"
+import (
+	"net/http"
+	"strings"
+)
 
-// CORS wraps a handler with cross-origin headers for the SPA frontend. The
-// allowed origin is configured (no wildcard with credentials). Preflight
-// OPTIONS requests are answered here.
-func CORS(allowedOrigin string, next http.Handler) http.Handler {
+// CORS wraps a handler with cross-origin headers for the SPA frontend. Multiple
+// origins are supported (e.g. the production domain plus localhost); an origin
+// matches when it appears in allowedOrigins, or when "*" is present. Matching is
+// case-insensitive. Preflight OPTIONS requests are answered here.
+func CORS(allowedOrigins []string, next http.Handler) http.Handler {
+	allowAll := false
+	set := make(map[string]struct{}, len(allowedOrigins))
+	for _, o := range allowedOrigins {
+		o = strings.TrimSpace(strings.ToLower(o))
+		if o == "*" {
+			allowAll = true
+		} else if o != "" {
+			set[o] = struct{}{}
+		}
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		if origin != "" && (allowedOrigin == "*" || origin == allowedOrigin) {
+		_, ok := set[strings.ToLower(origin)]
+		if origin != "" && (allowAll || ok) {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
