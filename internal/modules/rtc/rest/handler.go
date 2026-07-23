@@ -5,6 +5,7 @@ package rest
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -84,6 +85,14 @@ func (h *Handler) Signal(w http.ResponseWriter, r *http.Request) {
 
 	conn, err := ws.Upgrade(w, r)
 	if err != nil {
+		// A silent return leaves the browser with an opaque handshake failure
+		// and nothing in the logs. Report it instead: this is what a reverse
+		// proxy that strips Upgrade headers (or serves the backend over HTTP/2,
+		// where hijacking is unavailable) looks like in production.
+		slog.WarnContext(r.Context(), "rtc: websocket upgrade failed",
+			"err", err, "proto", r.Proto,
+			"upgrade", r.Header.Get("Upgrade"), "connection", r.Header.Get("Connection"))
+		web.Error(w, r, apperr.New("rtc.upgrade_failed", apperr.KindValidation))
 		return
 	}
 	defer conn.Close()

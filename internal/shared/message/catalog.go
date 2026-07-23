@@ -167,6 +167,11 @@ var catalog = map[string]map[string]string{
 		LocaleFa:  "تو عضوِ این کلاس نیستی.",
 		LocaleCkb: "تۆ بەشدارێکی ئەم وانەیە نیت.",
 	},
+	"rtc.upgrade_failed": {
+		LocaleEn:  "The live connection could not be established. A proxy or network may be blocking it.",
+		LocaleFa:  "اتصالِ زنده برقرار نشد. ممکن است پراکسی یا شبکه آن را مسدود کرده باشد.",
+		LocaleCkb: "پەیوەندی ڕاستەوخۆ دروست نەبوو. لەوانەیە پڕۆکسی یان تۆڕ ڕێی لێ گرتبێت.",
+	},
 	"assignment.not_found": {
 		LocaleEn:  "Assignment not found.",
 		LocaleFa:  "تمرین پیدا نشد.",
