@@ -243,6 +243,17 @@ func New(cfg config.Config) (*App, error) {
 	})
 	recordingModule.Service().SetRetentionDays(cfg.RecordingRetentionDays)
 
+	// TURN relays media when a direct path can't be negotiated (symmetric NAT,
+	// restrictive mobile networks). Without it those calls connect on the
+	// signalling channel but never exchange video — a silent, hard-to-trace
+	// failure — so make the gap explicit at boot.
+	if cfg.TurnURL == "" && cfg.TurnTLSURL == "" {
+		log.Warn("rtc: no TURN server configured; calls behind restrictive NATs will connect without media (set TURN_URL/TURN_TLS_URL and TURN_SECRET)")
+	}
+	if cfg.StunURL == "" {
+		log.Warn("rtc: no STUN server configured; remote video will not work across different networks (set STUN_URL)")
+	}
+
 	rtcModule := rtc.New(rtc.Deps{
 		Guard:       authModule.Authenticator(),
 		TokenParser: authModule.Authenticator(),

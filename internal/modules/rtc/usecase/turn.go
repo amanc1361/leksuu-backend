@@ -5,13 +5,14 @@ import (
 	"crypto/sha1"
 	"encoding/base64"
 	"strconv"
+	"strings"
 	"time"
 )
 
 // TurnSettings configure the self-hosted ICE servers (a coturn instance providing
 // both STUN and TURN). When TurnSecret is empty, only STUN is advertised.
 type TurnSettings struct {
-	StunURL    string // e.g. stun:turn.leksuu.app:3478
+	StunURL    string // one or more STUN URLs, comma-separated (e.g. stun:turn.leksuu.app:3478)
 	TurnURL    string // e.g. turn:turn.leksuu.app:3478
 	TurnTLSURL string // e.g. turns:turn.leksuu.app:5349
 	Secret     string // coturn static-auth-secret (TURN REST API)
@@ -39,8 +40,10 @@ type ICEConfig struct {
 // `static-auth-secret=<secret>`, so no per-user secret is ever shipped.
 func ICEConfigFor(userID string, s TurnSettings, now time.Time) ICEConfig {
 	cfg := ICEConfig{ICEServers: []ICEServer{}}
-	if s.StunURL != "" {
-		cfg.ICEServers = append(cfg.ICEServers, ICEServer{URLs: []string{s.StunURL}})
+	// Several STUN URLs may be configured; browsers race them, so listing more
+	// than one improves the odds on networks where a given host is unreachable.
+	if stun := splitURLs(s.StunURL); len(stun) > 0 {
+		cfg.ICEServers = append(cfg.ICEServers, ICEServer{URLs: stun})
 	}
 	urls := []string{}
 	if s.TurnURL != "" {
@@ -62,4 +65,15 @@ func ICEConfigFor(userID string, s TurnSettings, now time.Time) ICEConfig {
 		cfg.ICEServers = append(cfg.ICEServers, ICEServer{URLs: urls, Username: username, Credential: credential})
 	}
 	return cfg
+}
+
+// splitURLs parses a comma-separated URL list, ignoring blanks.
+func splitURLs(v string) []string {
+	out := []string{}
+	for _, p := range strings.Split(v, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

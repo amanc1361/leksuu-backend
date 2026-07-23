@@ -107,13 +107,16 @@ func Load() Config {
 		S3AccessKey:            env("S3_ACCESS_KEY", ""),
 		S3SecretKey:            env("S3_SECRET_KEY", ""),
 		S3Secure:               env("S3_SECURE", "true") != "false",
-		StunURL:                env("STUN_URL", ""),
-		TurnURL:                env("TURN_URL", ""),
-		TurnTLSURL:             env("TURN_TLS_URL", ""),
-		TurnSecret:             env("TURN_SECRET", ""),
-		TurnTTL:                atoiDefault(env("TURN_TTL_SECONDS", "86400")),
-		ReminderLeadMin:        atoiDefault(env("REMINDER_LEAD_MIN", "15")),
-		ReminderIntervalSec:    atoiDefault(env("REMINDER_INTERVAL_SEC", "60")),
+		// Without at least one STUN server the browser only gathers host
+		// candidates, so media never crosses two different networks — the room
+		// connects but every remote tile stays black. Ship reachable defaults.
+		StunURL:             env("STUN_URL", "stun:stun.cloudflare.com:3478,stun:stun.l.google.com:19302"),
+		TurnURL:             env("TURN_URL", ""),
+		TurnTLSURL:          env("TURN_TLS_URL", ""),
+		TurnSecret:          env("TURN_SECRET", ""),
+		TurnTTL:             atoiDefault(env("TURN_TTL_SECONDS", "86400")),
+		ReminderLeadMin:     atoiDefault(env("REMINDER_LEAD_MIN", "15")),
+		ReminderIntervalSec: atoiDefault(env("REMINDER_INTERVAL_SEC", "60")),
 	}
 }
 
