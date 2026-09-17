@@ -3,7 +3,15 @@
 // impl (ArvanCloud / MinIO) backs production — selected at the composition root.
 package domain
 
-import "context"
+import (
+	"context"
+	"errors"
+	"io"
+	"time"
+)
+
+// ErrNotFound is returned by Reader.Get when the key holds no object.
+var ErrNotFound = errors.New("media: object not found")
 
 // Store persists an object under a key and returns its public URL.
 type Store interface {
@@ -14,4 +22,22 @@ type Store interface {
 // API can expose them at GET /media/{key}.
 type LocalDir interface {
 	Dir() string
+}
+
+// Blob is one stored object opened for reading. Body is seekable so the API can
+// answer a Range request — seeking inside a recording — by fetching just that
+// range instead of buffering the whole object.
+type Blob struct {
+	Body        io.ReadSeekCloser
+	ContentType string
+	Size        int64
+	ModTime     time.Time
+}
+
+// Reader is implemented by stores whose bytes the API has to fetch itself: a
+// bucket that stays private, with no anonymous read access. The API serves it at
+// GET /media/{key} — the same path a local-disk store uses — so stored URLs look
+// identical whichever backend is configured.
+type Reader interface {
+	Get(ctx context.Context, key string) (*Blob, error)
 }

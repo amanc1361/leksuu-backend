@@ -53,8 +53,9 @@ services:
       JWT_SECRET: change-me-in-prod
       # media / object storage (local-disk default; persisted in the media volume).
       # For S3 object storage (ArvanCloud / MinIO), build the image with
-      # `-tags pgx,s3`, set S3_ENDPOINT/S3_BUCKET/S3_ACCESS_KEY/S3_SECRET_KEY and
-      # point MEDIA_PUBLIC_URL at the bucket/CDN base.
+      # `-tags pgx,s3` and set S3_ENDPOINT/S3_BUCKET/S3_ACCESS_KEY/S3_SECRET_KEY.
+      # MEDIA_PUBLIC_URL is the base of the stored URLs: the site origin for a
+      # private bucket, the bucket/CDN base when S3_PUBLIC_READ is true.
       MEDIA_PUBLIC_URL: "${MEDIA_PUBLIC_URL:-http://localhost:8080}"
       MEDIA_DIR: /data/media
       # Set these in the deployment environment to store imported JSON and
@@ -62,9 +63,14 @@ services:
       S3_ENDPOINT: "${S3_ENDPOINT:-}"
       S3_REGION: "${S3_REGION:-us-east-1}"
       S3_BUCKET: "${S3_BUCKET:-}"
+      # Key prefix inside the bucket - storage layout only, never part of a URL.
+      S3_PREFIX: "${S3_PREFIX:-}"
       S3_ACCESS_KEY: "${S3_ACCESS_KEY:-}"
       S3_SECRET_KEY: "${S3_SECRET_KEY:-}"
       S3_SECURE: "${S3_SECURE:-true}"
+      # Default false: the bucket stays private and the API streams its bytes at
+      # /media/<key>. Set true only for a bucket that allows anonymous reads.
+      S3_PUBLIC_READ: "${S3_PUBLIC_READ:-false}"
     ports: ["8080:8080"]
     volumes: ["mediadata:/data/media"]
     depends_on:

@@ -46,9 +46,11 @@ type Config struct {
 	S3Endpoint             string
 	S3Region               string
 	S3Bucket               string
+	S3Prefix               string
 	S3AccessKey            string
 	S3SecretKey            string
 	S3Secure               bool
+	S3PublicRead           bool
 	// live classes (WebRTC signaling + ICE)
 	StunURL    string
 	TurnURL    string
@@ -104,9 +106,13 @@ func Load() Config {
 		S3Endpoint:             env("S3_ENDPOINT", ""),
 		S3Region:               env("S3_REGION", "us-east-1"),
 		S3Bucket:               env("S3_BUCKET", ""),
+		S3Prefix:               env("S3_PREFIX", ""),
 		S3AccessKey:            env("S3_ACCESS_KEY", ""),
 		S3SecretKey:            env("S3_SECRET_KEY", ""),
 		S3Secure:               env("S3_SECURE", "true") != "false",
+		// Default false: a bucket is private unless its owner deliberately opened
+		// it, and guessing otherwise would hand every object to anyone with a URL.
+		S3PublicRead: env("S3_PUBLIC_READ", "false") == "true",
 		// Without at least one STUN server the browser only gathers host
 		// candidates, so media never crosses two different networks — the room
 		// connects but every remote tile stays black. Ship reachable defaults.

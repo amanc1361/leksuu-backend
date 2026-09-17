@@ -12,7 +12,7 @@ import (
 // (ArvanCloud / MinIO / AWS), else falls back to local disk.
 func newMediaStore(cfg config.Config) (mediadomain.Store, error) {
 	if cfg.S3Bucket != "" {
-		return mediastore.NewS3(cfg.S3Endpoint, cfg.S3Region, cfg.S3Bucket, cfg.S3AccessKey, cfg.S3SecretKey, cfg.MediaPublicURL, cfg.S3Secure)
+		return mediastore.NewS3(cfg.S3Endpoint, cfg.S3Region, cfg.S3Bucket, cfg.S3Prefix, cfg.S3AccessKey, cfg.S3SecretKey, cfg.MediaPublicURL, cfg.S3Secure, cfg.S3PublicRead)
 	}
 	return mediastore.NewLocal(cfg.MediaDir, cfg.MediaPublicURL)
 }
