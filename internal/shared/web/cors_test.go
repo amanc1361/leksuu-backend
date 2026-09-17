@@ -7,7 +7,7 @@ import (
 )
 
 func TestCORSAcceptsConfiguredOrigins(t *testing.T) {
-	handler := CORS("https://leksuu.app, http://localhost:5173", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	handler := CORS([]string{"https://leksuu.app", "http://localhost:5173"}, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -27,7 +27,7 @@ func TestCORSAcceptsConfiguredOrigins(t *testing.T) {
 }
 
 func TestCORSRejectsUnconfiguredOrigin(t *testing.T) {
-	handler := CORS("https://leksuu.app", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	handler := CORS([]string{"https://leksuu.app"}, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
 	req := httptest.NewRequest(http.MethodOptions, "/", nil)
 	req.Header.Set("Origin", "https://evil.example")
 	rec := httptest.NewRecorder()
@@ -40,7 +40,7 @@ func TestCORSRejectsUnconfiguredOrigin(t *testing.T) {
 }
 
 func TestCORSWildcardAllowsAnyOriginWithoutCredentials(t *testing.T) {
-	handler := CORS("*", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	handler := CORS([]string{"*"}, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
 	req := httptest.NewRequest(http.MethodOptions, "/", nil)
 	req.Header.Set("Origin", "https://frontend.example")
 	rec := httptest.NewRecorder()
