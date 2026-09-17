@@ -23,15 +23,21 @@ func NewLocal(dir, baseURL string) (*Local, error) {
 }
 
 func (l *Local) Put(_ context.Context, key, _ string, data []byte) (string, error) {
-	if err := os.WriteFile(filepath.Join(l.dir, filepath.Base(key)), data, 0o644); err != nil {
+	clean := strings.TrimPrefix(filepath.Clean("/"+key), "/")
+	target := filepath.Join(l.dir, clean)
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return "", err
 	}
-	return l.baseURL + "/media/" + key, nil
+	if err := os.WriteFile(target, data, 0o644); err != nil {
+		return "", err
+	}
+	return l.baseURL + "/media/" + clean, nil
 }
 
 // Remove deletes a stored object by key (no error if it's already gone).
 func (l *Local) Remove(_ context.Context, key string) error {
-	err := os.Remove(filepath.Join(l.dir, filepath.Base(key)))
+	clean := strings.TrimPrefix(filepath.Clean("/"+key), "/")
+	err := os.Remove(filepath.Join(l.dir, clean))
 	if os.IsNotExist(err) {
 		return nil
 	}

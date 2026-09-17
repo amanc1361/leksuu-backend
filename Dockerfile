@@ -7,10 +7,12 @@ RUN apk add --no-cache git
 ARG GOPROXY=https://proxy.golang.org,direct
 ENV GOPROXY=${GOPROXY}
 COPY . .
-# Production uses the pgx adapter (build tag `pgx`). Resolving it here also
+# Production includes the pgx and S3 adapters. If S3_BUCKET is empty the app
+# still falls back to local disk, so the same image works in development too.
+# Resolving dependencies here also
 # generates go.sum on first build (the default build is dependency-free).
 RUN go mod tidy
-RUN CGO_ENABLED=0 GOOS=linux go build -tags pgx -ldflags="-s -w" -o /out/api ./cmd/api && \
+RUN CGO_ENABLED=0 GOOS=linux go build -tags pgx,s3 -ldflags="-s -w" -o /out/api ./cmd/api && \
     CGO_ENABLED=0 GOOS=linux go build -tags pgx -ldflags="-s -w" -o /out/migrate ./cmd/migrate
 
 # ---- runtime stage: minimal, non-root ----

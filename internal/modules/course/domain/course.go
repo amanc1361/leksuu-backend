@@ -46,6 +46,7 @@ type Unit struct {
 
 type Lesson struct {
 	ID        string
+	SourceID  string // stable external ID used to make course imports idempotent
 	CourseID  string
 	UnitID    string
 	Position  int

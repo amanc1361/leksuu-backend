@@ -16,11 +16,13 @@ type Guard interface {
 // cache-friendly public file route at GET /media/{file}.
 func (h *Handler) Mount(mux *http.ServeMux, prefix string, guard Guard, store domain.Store) {
 	mux.Handle("POST "+prefix+"/media", guard.RequireRole("admin", http.HandlerFunc(h.Upload)))
+	mux.Handle("POST "+prefix+"/media/remote", guard.RequireRole("admin", http.HandlerFunc(h.ImportRemote)))
+	mux.Handle("POST "+prefix+"/admin/course-import-sources", guard.RequireRole("admin", http.HandlerFunc(h.ArchiveCourseImport)))
 	mux.Handle("POST "+prefix+"/media/avatar", guard.Require(http.HandlerFunc(h.UploadAvatar)))
 
 	if local, ok := store.(domain.LocalDir); ok {
 		fs := http.StripPrefix("/media/", http.FileServer(http.Dir(local.Dir())))
-		mux.Handle("GET /media/{file}", longCache(fs))
+		mux.Handle("GET /media/{file...}", longCache(fs))
 	}
 }
 

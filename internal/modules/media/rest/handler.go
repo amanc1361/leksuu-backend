@@ -2,15 +2,124 @@ package rest
 
 import (
 	"context"
+	"encoding/json"
 	"io"
+	"mime"
+	"net"
 	"net/http"
+	"net/url"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/leksuu/platform/internal/modules/media/usecase"
 	"github.com/leksuu/platform/internal/shared/apperr"
 	"github.com/leksuu/platform/internal/shared/authn"
 	"github.com/leksuu/platform/internal/shared/web"
 )
+
+type remoteInput struct {
+	URL         string `json:"url"`
+	Filename    string `json:"filename"`
+	ContentType string `json:"content_type"`
+}
+
+// ImportRemote copies a public HTTP(S) asset into the configured object store.
+// Private/link-local destinations are rejected to keep this admin tool from
+// becoming an SSRF path into the deployment network.
+func (h *Handler) ImportRemote(w http.ResponseWriter, r *http.Request) {
+	var in remoteInput
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&in) != nil {
+		web.Error(w, r, apperr.ErrBadRequest)
+		return
+	}
+	u, err := url.Parse(in.URL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || !publicHost(r.Context(), u.Hostname()) {
+		web.Error(w, r, apperr.ErrBadRequest)
+		return
+	}
+	client := &http.Client{Timeout: 45 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 5 || !publicHost(req.Context(), req.URL.Hostname()) {
+			return http.ErrUseLastResponse
+		}
+		return nil
+	}}
+	req, _ := http.NewRequestWithContext(r.Context(), http.MethodGet, u.String(), nil)
+	resp, err := client.Do(req)
+	if err != nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if resp != nil {
+			resp.Body.Close()
+		}
+		web.Error(w, r, apperr.ErrBadRequest)
+		return
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, h.maxBytes+1))
+	if err != nil || int64(len(data)) > h.maxBytes {
+		web.Error(w, r, apperr.New("media.too_large", apperr.KindValidation))
+		return
+	}
+	name := in.Filename
+	if name == "" {
+		name = filepath.Base(u.Path)
+	}
+	ct := in.ContentType
+	if ct == "" {
+		ct = strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"), ";")[0])
+	}
+	if ct == "" {
+		ct = http.DetectContentType(data)
+	}
+	if ct == "application/octet-stream" || ct == "binary/octet-stream" {
+		if inferred := mime.TypeByExtension(filepath.Ext(name)); inferred != "" {
+			ct = strings.TrimSpace(strings.Split(inferred, ";")[0])
+		}
+	}
+	up, err := h.svc.Upload(r.Context(), name, ct, data)
+	if err != nil {
+		web.Error(w, r, err)
+		return
+	}
+	web.JSON(w, http.StatusCreated, up)
+}
+
+func publicHost(ctx context.Context, host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return false
+	}
+	ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
+	if err != nil || len(ips) == 0 {
+		return false
+	}
+	for _, ip := range ips {
+		if ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+			return false
+		}
+	}
+	return true
+}
+
+func (h *Handler) ArchiveCourseImport(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		FileName string          `json:"file_name"`
+		RawJSON  string          `json:"raw_json"`
+		Metadata json.RawMessage `json:"metadata"`
+	}
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, h.maxBytes+(1<<20))).Decode(&in) != nil || in.RawJSON == "" || !json.Valid([]byte(in.RawJSON)) {
+		web.Error(w, r, apperr.ErrBadRequest)
+		return
+	}
+	result, err := h.svc.ArchiveJSON(r.Context(), in.FileName, []byte(in.RawJSON))
+	if err != nil {
+		web.Error(w, r, err)
+		return
+	}
+	out := map[string]any{"id": result.ID, "file_name": result.FileName, "storage_key": result.StorageKey, "url": result.URL, "content_type": result.ContentType, "content_bytes": result.ContentBytes, "sha256": result.SHA256}
+	if len(in.Metadata) > 0 {
+		out["metadata"] = in.Metadata
+	}
+	web.JSON(w, http.StatusCreated, out)
+}
 
 type Handler struct {
 	svc      *usecase.Service

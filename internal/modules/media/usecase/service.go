@@ -3,7 +3,9 @@ package usecase
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"image"
 	"image/color"
 	_ "image/gif" // register GIF decoder
@@ -29,6 +31,17 @@ type Uploaded struct {
 	Height      int       `json:"height,omitempty"`
 	Blur        string    `json:"blur,omitempty"`
 	Variants    []Variant `json:"variants,omitempty"`
+}
+
+// ArchivedJSON describes an immutable copy of an imported source document.
+type ArchivedJSON struct {
+	ID           string `json:"id"`
+	FileName     string `json:"file_name"`
+	StorageKey   string `json:"storage_key"`
+	URL          string `json:"url"`
+	ContentType  string `json:"content_type"`
+	ContentBytes int    `json:"content_bytes"`
+	SHA256       string `json:"sha256"`
 }
 
 // Variant is a resized rendition for responsive delivery (srcset).
@@ -68,6 +81,26 @@ func (s *Service) Upload(ctx context.Context, filename, contentType string, data
 		s.makeVariants(ctx, up, key, data)
 	}
 	return up, nil
+}
+
+// ArchiveJSON stores the exact source used by a course import. The digest in
+// the object name makes retries idempotent at the storage layer.
+func (s *Service) ArchiveJSON(ctx context.Context, filename string, data []byte) (*ArchivedJSON, error) {
+	if len(data) == 0 || (s.maxBytes > 0 && int64(len(data)) > s.maxBytes) {
+		return nil, apperr.New("media.too_large", apperr.KindValidation)
+	}
+	sum := sha256.Sum256(data)
+	digest := hex.EncodeToString(sum[:])
+	name := strings.TrimSuffix(filepath.Base(filename), filepath.Ext(filename))
+	if name == "" || name == "." {
+		name = "course-import"
+	}
+	key := "imports/" + digest[:16] + "-" + name + ".json"
+	url, err := s.store.Put(ctx, key, "application/json", data)
+	if err != nil {
+		return nil, apperr.ErrInternal
+	}
+	return &ArchivedJSON{ID: digest, FileName: filename, StorageKey: key, URL: url, ContentType: "application/json", ContentBytes: len(data), SHA256: digest}, nil
 }
 
 // responsiveWidths are the rendition widths generated on upload. Only widths

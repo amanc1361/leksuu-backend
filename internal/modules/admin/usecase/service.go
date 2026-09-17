@@ -140,18 +140,30 @@ func (s *Service) ReorderLessons(ctx context.Context, unitID string, orderedIDs 
 	return s.repo.ReorderLessons(ctx, unitID, orderedIDs)
 }
 
-func (s *Service) AddLessonToUnit(ctx context.Context, unitID, title string, position int) (*coursedomain.Lesson, error) {
+func (s *Service) AddLessonToUnit(ctx context.Context, unitID, title, sourceID string, position int) (*coursedomain.Lesson, bool, error) {
 	if title == "" {
-		return nil, apperr.ErrBadRequest
+		return nil, false, apperr.ErrBadRequest
 	}
 	if _, err := s.repo.Unit(ctx, unitID); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	l := &coursedomain.Lesson{UnitID: unitID, Title: title, Position: position}
+	sourceID = strings.TrimSpace(sourceID)
+	if sourceID != "" {
+		lessons, err := s.repo.LessonsByUnit(ctx, unitID)
+		if err != nil {
+			return nil, false, err
+		}
+		for i := range lessons {
+			if lessons[i].SourceID == sourceID {
+				return &lessons[i], true, nil
+			}
+		}
+	}
+	l := &coursedomain.Lesson{UnitID: unitID, Title: title, SourceID: sourceID, Position: position}
 	if err := s.repo.CreateLesson(ctx, l); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return l, nil
+	return l, false, nil
 }
 
 func (s *Service) UpdateLesson(ctx context.Context, id, title, focus, coverURL string, objective json.RawMessage) (*coursedomain.Lesson, error) {

@@ -105,7 +105,7 @@ func (h *Handler) ListUnitLessons(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]map[string]any, 0, len(lessons))
 	for _, l := range lessons {
-		entry := map[string]any{"id": l.ID, "position": l.Position, "title": l.Title, "unit_id": l.UnitID, "focus": l.Focus}
+		entry := map[string]any{"id": l.ID, "position": l.Position, "title": l.Title, "unit_id": l.UnitID, "source_id": l.SourceID, "focus": l.Focus}
 		if len(l.Objective) > 0 {
 			entry["objective"] = json.RawMessage(l.Objective)
 		}
@@ -117,18 +117,19 @@ func (h *Handler) ListUnitLessons(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) CreateUnitLesson(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Title    string `json:"title"`
+		SourceID string `json:"source_id"`
 		Position int    `json:"position"`
 	}
 	if json.NewDecoder(r.Body).Decode(&in) != nil {
 		web.Error(w, r, apperr.ErrBadRequest)
 		return
 	}
-	l, err := h.svc.AddLessonToUnit(r.Context(), r.PathValue("id"), in.Title, in.Position)
+	l, reused, err := h.svc.AddLessonToUnit(r.Context(), r.PathValue("id"), in.Title, in.SourceID, in.Position)
 	if err != nil {
 		web.Error(w, r, err)
 		return
 	}
-	web.JSON(w, http.StatusCreated, map[string]any{"id": l.ID, "position": l.Position, "title": l.Title, "unit_id": l.UnitID})
+	web.JSON(w, http.StatusCreated, map[string]any{"id": l.ID, "position": l.Position, "title": l.Title, "unit_id": l.UnitID, "source_id": l.SourceID, "reused": reused})
 }
 
 func (h *Handler) ReorderLessons(w http.ResponseWriter, r *http.Request) {
@@ -218,7 +219,7 @@ func lessonAdminView(l coursedomain.Lesson) map[string]any {
 	}
 	return map[string]any{
 		"id": l.ID, "title": l.Title, "position": l.Position, "unit_id": l.UnitID,
-		"cover_url": l.CoverURL, "focus": l.Focus, "objective": obj,
+		"source_id": l.SourceID, "cover_url": l.CoverURL, "focus": l.Focus, "objective": obj,
 	}
 }
 
