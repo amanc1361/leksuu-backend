@@ -256,6 +256,22 @@ func (r *PostgresCourseRepo) UpdateLesson(ctx context.Context, l *domain.Lesson)
 	return err
 }
 
+// MoveLessonToUnit moves a lesson to the end of another unit of the same course.
+func (r *PostgresCourseRepo) MoveLessonToUnit(ctx context.Context, lessonID, unitID string) error {
+	var id string
+	err := r.pool.QueryRow(ctx,
+		`UPDATE lessons SET
+		   unit_id = $2,
+		   position = (SELECT COALESCE(max(position),0)+1 FROM lessons WHERE unit_id=$2)
+		 WHERE id=$1 AND course_id = (SELECT course_id FROM units WHERE id=$2)
+		 RETURNING id`,
+		lessonID, unitID).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.ErrLessonNotFound
+	}
+	return err
+}
+
 func (r *PostgresCourseRepo) CreateLesson(ctx context.Context, l *domain.Lesson) error {
 	return r.pool.QueryRow(ctx,
 		`INSERT INTO lessons (course_id, unit_id, position, title, version, source_id)

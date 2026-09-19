@@ -441,6 +441,39 @@ func (r *MemoryCourseRepo) SetPublished(_ context.Context, courseID string, publ
 	return domain.ErrCourseNotFound
 }
 
+func (r *MemoryCourseRepo) MoveLessonToUnit(_ context.Context, lessonID, unitID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	cid, ok := r.lessonCourse[lessonID]
+	if !ok {
+		return domain.ErrLessonNotFound
+	}
+	inCourse := false
+	for _, u := range r.units[cid] {
+		if u.ID == unitID {
+			inCourse = true
+		}
+	}
+	if !inCourse {
+		return domain.ErrLessonNotFound
+	}
+	list := r.lessons[cid]
+	n := 0
+	for _, x := range list {
+		if x.UnitID == unitID {
+			n++
+		}
+	}
+	for i := range list {
+		if list[i].ID == lessonID {
+			list[i].UnitID = unitID
+			list[i].Position = n + 1
+			return nil
+		}
+	}
+	return domain.ErrLessonNotFound
+}
+
 func (r *MemoryCourseRepo) CreateLesson(_ context.Context, l *domain.Lesson) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

@@ -22,6 +22,7 @@ type Repository interface {
 	SetPublished(ctx context.Context, id string, published bool) error
 	CreateLesson(ctx context.Context, l *coursedomain.Lesson) error
 	UpdateLesson(ctx context.Context, l *coursedomain.Lesson) error
+	MoveLessonToUnit(ctx context.Context, lessonID, unitID string) error
 	Lesson(ctx context.Context, id string) (*coursedomain.Lesson, error)
 	Lessons(ctx context.Context, courseID string) ([]coursedomain.Lesson, error)
 	CreateItem(ctx context.Context, it *coursedomain.LessonItem) error
@@ -183,6 +184,29 @@ func (s *Service) UpdateLesson(ctx context.Context, id, title, focus, coverURL s
 		return nil, err
 	}
 	return l, nil
+}
+
+// MoveLessonToUnit moves a lesson into another unit of its course (appended at
+// the end). Used by re-imports when a lesson's unit grouping changed.
+func (s *Service) MoveLessonToUnit(ctx context.Context, lessonID, unitID string) error {
+	if lessonID == "" || unitID == "" {
+		return apperr.ErrBadRequest
+	}
+	l, err := s.repo.Lesson(ctx, lessonID)
+	if err != nil {
+		return err
+	}
+	u, err := s.repo.Unit(ctx, unitID)
+	if err != nil {
+		return err
+	}
+	if u.CourseID != l.CourseID {
+		return apperr.ErrBadRequest
+	}
+	if l.UnitID == unitID {
+		return nil
+	}
+	return s.repo.MoveLessonToUnit(ctx, lessonID, unitID)
 }
 
 func (s *Service) AddLesson(ctx context.Context, courseID, title string, position int) (*coursedomain.Lesson, error) {

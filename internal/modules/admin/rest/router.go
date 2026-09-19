@@ -28,6 +28,7 @@ func (h *Handler) Mount(mux *http.ServeMux, prefix string, guard Guard) {
 	mux.Handle("GET "+prefix+"/admin/courses/{id}/lessons", admin(h.ListLessons))
 	mux.Handle("POST "+prefix+"/admin/courses/{id}/lessons", admin(h.CreateLesson))
 	mux.Handle("PATCH "+prefix+"/admin/lessons/{id}", admin(h.UpdateLesson))
+	mux.Handle("PATCH "+prefix+"/admin/lessons/{id}/unit", admin(h.MoveLesson))
 	mux.Handle("GET "+prefix+"/admin/lessons/{id}/items", admin(h.ListItems))
 	mux.Handle("POST "+prefix+"/admin/lessons/{id}/items", admin(h.CreateItem))
 	mux.Handle("PATCH "+prefix+"/admin/items/{id}", admin(h.UpdateItem))

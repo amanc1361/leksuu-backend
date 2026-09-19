@@ -242,6 +242,21 @@ func (h *Handler) UpdateLesson(w http.ResponseWriter, r *http.Request) {
 	web.JSON(w, http.StatusOK, lessonAdminView(*l))
 }
 
+func (h *Handler) MoveLesson(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		UnitID string `json:"unit_id"`
+	}
+	if json.NewDecoder(r.Body).Decode(&in) != nil {
+		web.Error(w, r, apperr.ErrBadRequest)
+		return
+	}
+	if err := h.svc.MoveLessonToUnit(r.Context(), r.PathValue("id"), in.UnitID); err != nil {
+		web.Error(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (h *Handler) CreateItem(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Kind      string          `json:"kind"`
