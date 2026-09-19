@@ -244,20 +244,21 @@ func (h *Handler) UpdateLesson(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) CreateItem(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Kind     string          `json:"kind"`
-		Position int             `json:"position"`
-		Payload  json.RawMessage `json:"payload"`
+		Kind      string          `json:"kind"`
+		Position  int             `json:"position"`
+		Payload   json.RawMessage `json:"payload"`
+		SourceRef string          `json:"source_ref"`
 	}
 	if json.NewDecoder(r.Body).Decode(&in) != nil {
 		web.Error(w, r, apperr.ErrBadRequest)
 		return
 	}
-	it, err := h.svc.AddItem(r.Context(), r.PathValue("id"), in.Kind, in.Payload, in.Position)
+	it, err := h.svc.AddItem(r.Context(), r.PathValue("id"), in.Kind, in.Payload, in.Position, in.SourceRef)
 	if err != nil {
 		web.Error(w, r, err)
 		return
 	}
-	web.JSON(w, http.StatusCreated, map[string]any{"id": it.ID, "position": it.Position, "kind": it.Kind})
+	web.JSON(w, http.StatusCreated, map[string]any{"id": it.ID, "position": it.Position, "kind": it.Kind, "source_ref": it.SourceRef})
 }
 
 func (h *Handler) CreateExercise(w http.ResponseWriter, r *http.Request) {
@@ -287,7 +288,7 @@ func (h *Handler) ListItems(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]map[string]any, 0, len(items))
 	for _, it := range items {
-		out = append(out, map[string]any{"id": it.ID, "position": it.Position, "kind": it.Kind, "payload": it.Payload, "media_key": it.MediaKey})
+		out = append(out, map[string]any{"id": it.ID, "position": it.Position, "kind": it.Kind, "payload": it.Payload, "media_key": it.MediaKey, "source_ref": it.SourceRef})
 	}
 	web.JSON(w, http.StatusOK, map[string]any{"items": out})
 }

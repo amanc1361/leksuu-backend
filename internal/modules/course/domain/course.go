@@ -67,6 +67,9 @@ type LessonItem struct {
 	RefID    *string
 	Payload  json.RawMessage
 	MediaKey *string
+	// SourceRef is set on items created by a course import (the external node
+	// ID). A re-import replaces only these; hand-authored items keep it empty.
+	SourceRef string
 }
 
 // Exercise is an interactive task attached to a lesson item. AnswerKey is the
