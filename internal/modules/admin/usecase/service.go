@@ -199,11 +199,11 @@ func (s *Service) AddLesson(ctx context.Context, courseID, title string, positio
 	return l, nil
 }
 
-func (s *Service) AddItem(ctx context.Context, lessonID, kind string, payload json.RawMessage, position int) (*coursedomain.LessonItem, error) {
+func (s *Service) AddItem(ctx context.Context, lessonID, kind string, payload json.RawMessage, position int, sourceRef string) (*coursedomain.LessonItem, error) {
 	if kind == "" {
 		return nil, apperr.ErrBadRequest
 	}
-	it := &coursedomain.LessonItem{LessonID: lessonID, Kind: kind, Payload: payload, Position: position}
+	it := &coursedomain.LessonItem{LessonID: lessonID, Kind: kind, Payload: payload, Position: position, SourceRef: strings.TrimSpace(sourceRef)}
 	if err := s.repo.CreateItem(ctx, it); err != nil {
 		return nil, err
 	}
@@ -375,7 +375,7 @@ func (s *Service) ImportMedia(ctx context.Context, in ImportMediaInput) (*course
 		return nil, err
 	}
 	existing, _ := s.repo.Items(ctx, lessonID)
-	return s.AddItem(ctx, lessonID, kind, payload, len(existing))
+	return s.AddItem(ctx, lessonID, kind, payload, len(existing), "")
 }
 
 // UpdateMedia rewrites an existing media item's payload (title, language, level,

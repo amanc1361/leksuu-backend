@@ -94,7 +94,7 @@ func (r *PostgresCourseRepo) Lesson(ctx context.Context, id string) (*domain.Les
 
 func (r *PostgresCourseRepo) Items(ctx context.Context, lessonID string) ([]domain.LessonItem, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT id, lesson_id, position, kind, ref_id, payload, media_key
+		`SELECT id, lesson_id, position, kind, ref_id, payload, media_key, COALESCE(source_ref,'')
 		   FROM lesson_items WHERE lesson_id=$1 ORDER BY position`, lessonID)
 	if err != nil {
 		return nil, err
@@ -103,7 +103,7 @@ func (r *PostgresCourseRepo) Items(ctx context.Context, lessonID string) ([]doma
 	var out []domain.LessonItem
 	for rows.Next() {
 		var it domain.LessonItem
-		if err := rows.Scan(&it.ID, &it.LessonID, &it.Position, &it.Kind, &it.RefID, &it.Payload, &it.MediaKey); err != nil {
+		if err := rows.Scan(&it.ID, &it.LessonID, &it.Position, &it.Kind, &it.RefID, &it.Payload, &it.MediaKey, &it.SourceRef); err != nil {
 			return nil, err
 		}
 		out = append(out, it)
@@ -308,10 +308,10 @@ func (r *PostgresCourseRepo) UpdateItem(ctx context.Context, it *domain.LessonIt
 
 func (r *PostgresCourseRepo) CreateItem(ctx context.Context, it *domain.LessonItem) error {
 	return r.pool.QueryRow(ctx,
-		`INSERT INTO lesson_items (lesson_id, position, kind, ref_id, payload, media_key)
-		 VALUES ($1, COALESCE(NULLIF($2,0), (SELECT COALESCE(max(position),0)+1 FROM lesson_items WHERE lesson_id=$1)), $3, $4, COALESCE($5,'{}')::jsonb, $6)
+		`INSERT INTO lesson_items (lesson_id, position, kind, ref_id, payload, media_key, source_ref)
+		 VALUES ($1, COALESCE(NULLIF($2,0), (SELECT COALESCE(max(position),0)+1 FROM lesson_items WHERE lesson_id=$1)), $3, $4, COALESCE($5,'{}')::jsonb, $6, NULLIF($7,''))
 		 RETURNING id, position`,
-		it.LessonID, it.Position, it.Kind, it.RefID, []byte(it.Payload), it.MediaKey).Scan(&it.ID, &it.Position)
+		it.LessonID, it.Position, it.Kind, it.RefID, []byte(it.Payload), it.MediaKey, it.SourceRef).Scan(&it.ID, &it.Position)
 }
 
 func (r *PostgresCourseRepo) CreateExercise(ctx context.Context, e *domain.Exercise) error {
