@@ -26,6 +26,11 @@ func TestGradeAllTypes(t *testing.T) {
 		{"reorder wrong", ex("reorder", `{"order":["I","am","Sara"]}`), `{"order":["am","I","Sara"]}`, false},
 		{"match right (any order)", ex("match", `{"pairs":[["Hello","سلام"],["Bye","خداحافظ"]]}`), `{"pairs":[["Bye","خداحافظ"],["Hello","سلام"]]}`, true},
 		{"match wrong", ex("match", `{"pairs":[["Hello","سلام"],["Bye","خداحافظ"]]}`), `{"pairs":[["Hello","خداحافظ"],["Bye","سلام"]]}`, false},
+		{"select right (any order)", ex("select_words", `{"selected":[0,4]}`), `{"selected":[4,0]}`, true},
+		{"select missing one", ex("select_words", `{"selected":[0,4]}`), `{"selected":[0]}`, false},
+		{"select extra tile", ex("select_words", `{"selected":[0,4]}`), `{"selected":[0,4,2]}`, false},
+		{"select wrong tile", ex("select_words", `{"selected":[0,4]}`), `{"selected":[0,3]}`, false},
+		{"fill accepts an alternative", ex("fill_blank", `{"answers":["aren't","are not"]}`), `{"text":"are not"}`, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

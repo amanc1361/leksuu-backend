@@ -4,9 +4,12 @@ package store
 
 import (
 	"context"
+	"mime"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/leksuu/platform/internal/modules/media/domain"
 )
 
 // Local writes objects to a directory and serves them via the API.
@@ -31,7 +34,22 @@ func (l *Local) Put(_ context.Context, key, _ string, data []byte) (string, erro
 	if err := os.WriteFile(target, data, 0o644); err != nil {
 		return "", err
 	}
-	return l.baseURL + "/media/" + clean, nil
+	return l.URL(key), nil
+}
+
+// URL is where a stored key is served from.
+func (l *Local) URL(key string) string {
+	return l.baseURL + "/media/" + strings.TrimPrefix(filepath.Clean("/"+key), "/")
+}
+
+// Stat reports whether the key already holds a file.
+func (l *Local) Stat(_ context.Context, key string) (string, error) {
+	clean := strings.TrimPrefix(filepath.Clean("/"+key), "/")
+	fi, err := os.Stat(filepath.Join(l.dir, clean))
+	if err != nil || fi.IsDir() {
+		return "", domain.ErrNotFound
+	}
+	return mime.TypeByExtension(filepath.Ext(clean)), nil
 }
 
 // Remove deletes a stored object by key (no error if it's already gone).

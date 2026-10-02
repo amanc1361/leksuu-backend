@@ -689,6 +689,42 @@ func (r *MemoryCourseRepo) DeleteItem(_ context.Context, itemID string) error {
 	return nil // idempotent
 }
 
+// ReplaceImportedItems mirrors the Postgres behaviour: drop the lesson's
+// imported items, keep hand-authored ones, append the new set in order.
+func (r *MemoryCourseRepo) ReplaceImportedItems(_ context.Context, lessonID string, items []domain.ImportedItem) ([]domain.LessonItem, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	kept := make([]domain.LessonItem, 0, len(r.items[lessonID]))
+	base := 0
+	for _, it := range r.items[lessonID] {
+		if it.SourceRef != "" {
+			delete(r.exs, it.ID)
+			continue
+		}
+		kept = append(kept, it)
+		if it.Position > base {
+			base = it.Position
+		}
+	}
+	out := make([]domain.LessonItem, 0, len(items))
+	for i, in := range items {
+		payload := in.Payload
+		if len(payload) == 0 {
+			payload = raw(`{}`)
+		}
+		it := domain.LessonItem{ID: id.New(), LessonID: lessonID, Position: base + i + 1, Kind: in.Kind, Payload: payload, SourceRef: in.SourceRef}
+		for _, e := range in.Exercises {
+			e.ID = id.New()
+			e.LessonItemID = it.ID
+			r.exs[it.ID] = append(r.exs[it.ID], e)
+		}
+		kept = append(kept, it)
+		out = append(out, it)
+	}
+	r.items[lessonID] = kept
+	return out, nil
+}
+
 func (r *MemoryCourseRepo) ReorderItems(_ context.Context, lessonID string, orderedIDs []string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

@@ -20,6 +20,9 @@ const (
 	KindStory     = "story"
 	KindPodcast   = "podcast"
 	KindGrammar   = "grammar"
+	KindReading   = "reading"  // a longer text read before its comprehension questions
+	KindWriting   = "writing"  // open writing task checked by the AI writing coach
+	KindRoleplay  = "roleplay" // scenario conversation with the AI tutor
 )
 
 // Course is a CEFR-leveled program in a target language.
@@ -70,6 +73,15 @@ type LessonItem struct {
 	// SourceRef is set on items created by a course import (the external node
 	// ID). A re-import replaces only these; hand-authored items keep it empty.
 	SourceRef string
+}
+
+// ImportedItem is one lesson item produced by a course import, together with
+// its exercises. A lesson's imported items are always replaced as one set.
+type ImportedItem struct {
+	Kind      string
+	Payload   json.RawMessage
+	SourceRef string
+	Exercises []Exercise
 }
 
 // Exercise is an interactive task attached to a lesson item. AnswerKey is the

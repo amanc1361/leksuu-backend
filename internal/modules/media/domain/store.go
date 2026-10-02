@@ -41,3 +41,12 @@ type Blob struct {
 type Reader interface {
 	Get(ctx context.Context, key string) (*Blob, error)
 }
+
+// Lookup is implemented by stores that can tell whether a key already holds an
+// object, and what its URL is, without writing. Remote imports use it to skip
+// downloading and re-uploading media that an earlier import already copied.
+type Lookup interface {
+	// Stat returns the stored content type, or ErrNotFound.
+	Stat(ctx context.Context, key string) (contentType string, err error)
+	URL(key string) string
+}

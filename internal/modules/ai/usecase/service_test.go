@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/leksuu/platform/internal/modules/ai/domain"
@@ -120,5 +121,35 @@ func TestChatRejectsEmptyHistory(t *testing.T) {
 	svc := NewService(fakeProvider{out: "{}"})
 	if _, err := svc.Chat(context.Background(), domain.ChatInput{}); err == nil {
 		t.Fatal("expected error for empty messages")
+	}
+}
+
+// recordingProvider captures the user prompt so tests can check what reaches the model.
+type recordingProvider struct {
+	out  string
+	user *string
+}
+
+func (recordingProvider) Name() string { return "rec" }
+func (p recordingProvider) Complete(_ context.Context, _ string, user string) (string, error) {
+	*p.user = user
+	return p.out, nil
+}
+
+func TestChatRoleplayOpensWithoutHistory(t *testing.T) {
+	var user string
+	svc := NewService(recordingProvider{out: `{"reply":"Hi, I'm Sam. What's your name?","translation":"x"}`, user: &user})
+	sc := &domain.ChatScenario{Title: "Giving your name", Goal: "Say your name and ask for someone else's name", AIRole: "a new colleague"}
+	rep, err := svc.Chat(context.Background(), domain.ChatInput{Scenario: sc})
+	if err != nil || rep.Reply == "" {
+		t.Fatalf("roleplay opening failed: %v", err)
+	}
+	for _, want := range []string{"ROLEPLAY", "Giving your name", "a new colleague", "Open the conversation"} {
+		if !strings.Contains(user, want) {
+			t.Fatalf("prompt is missing %q:\n%s", want, user)
+		}
+	}
+	if _, err := svc.Chat(context.Background(), domain.ChatInput{Scenario: &domain.ChatScenario{}}); err == nil {
+		t.Fatal("an empty scenario with no history must be rejected")
 	}
 }

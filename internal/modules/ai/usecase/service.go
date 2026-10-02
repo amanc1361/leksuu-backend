@@ -225,8 +225,12 @@ const systemPromptChat = `You are a patient, friendly conversation tutor for a l
 
 // Chat continues a level-limited conversation as a tutor.
 func (s *Service) Chat(ctx context.Context, in domain.ChatInput) (*domain.ChatReply, error) {
-	if len(in.Messages) == 0 {
+	sc := cleanScenario(in.Scenario)
+	if len(in.Messages) == 0 && sc == nil {
 		return nil, apperr.ErrBadRequest
+	}
+	if len(in.Messages) > maxChatTurns {
+		in.Messages = in.Messages[len(in.Messages)-maxChatTurns:]
 	}
 	if in.TargetLang == "" {
 		in.TargetLang = "en"
@@ -249,6 +253,24 @@ func (s *Service) Chat(ctx context.Context, in domain.ChatInput) (*domain.ChatRe
 		"Target language: %s. Native language: %s. CEFR level: %s.\n"+
 			"Continue as the Tutor. Conversation so far:\n%s",
 		in.TargetLang, in.NativeLang, in.Level, b.String())
+	if sc != nil {
+		role := sc.AIRole
+		if role == "" {
+			role = "a friendly colleague"
+		}
+		user = fmt.Sprintf(
+			"Target language: %s. Native language: %s. CEFR level: %s.\n"+
+				"ROLEPLAY. Situation: %s. You play %s; the learner plays %s. "+
+				"The learner's goal: %s. Stay in character, keep every turn to one or two short sentences, "+
+				"and steer the conversation so the learner gets to practise that goal. "+
+				"If the learner makes a mistake, model the correct form naturally in your reply.\n",
+			in.TargetLang, in.NativeLang, in.Level, sc.Title, role, orDefault(sc.LearnerRole, "themself"), orDefault(sc.Goal, sc.Title))
+		if len(in.Messages) == 0 {
+			user += "Open the conversation with your first line."
+		} else {
+			user += "Conversation so far:\n" + b.String()
+		}
+	}
 	raw, err := s.provider.Complete(ctx, systemPromptChat, user)
 	if err != nil {
 		return nil, err
@@ -258,6 +280,40 @@ func (s *Service) Chat(ctx context.Context, in domain.ChatInput) (*domain.ChatRe
 		return nil, apperr.New("ai.bad_output", apperr.KindValidation)
 	}
 	return rep, nil
+}
+
+// maxChatTurns keeps the prompt bounded on long conversations; the tutor only
+// needs the recent turns to stay coherent.
+const maxChatTurns = 24
+
+// cleanScenario trims a roleplay scenario and caps its fields (they come from
+// lesson content, but still reach the model verbatim). Nil when it is empty.
+func cleanScenario(sc *domain.ChatScenario) *domain.ChatScenario {
+	if sc == nil {
+		return nil
+	}
+	clip := func(s string) string {
+		s = strings.TrimSpace(s)
+		if r := []rune(s); len(r) > 200 {
+			s = string(r[:200])
+		}
+		return s
+	}
+	out := &domain.ChatScenario{Title: clip(sc.Title), Goal: clip(sc.Goal), AIRole: clip(sc.AIRole), LearnerRole: clip(sc.LearnerRole)}
+	if out.Title == "" && out.Goal == "" {
+		return nil
+	}
+	if out.Title == "" {
+		out.Title = out.Goal
+	}
+	return out
+}
+
+func orDefault(s, def string) string {
+	if s == "" {
+		return def
+	}
+	return s
 }
 
 // extractJSONObject pulls the outermost {...} from model output, tolerating

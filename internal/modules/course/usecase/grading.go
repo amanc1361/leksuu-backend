@@ -19,6 +19,7 @@ const (
 	TypeSentenceBuild = "sentence_builder" // arrange word tiles (writing) — graded like reorder
 	TypeMatchImage    = "match_image"      // match word ↔ image (vocab) — graded like match
 	TypeSpeak         = "speak"            // say a phrase aloud → pronunciation score (Phase 4)
+	TypeSelectWords   = "select_words"     // pick every correct tile from a set (grammar spotting)
 )
 
 // grade evaluates a learner's answer SERVER-SIDE against the exercise's answer
@@ -97,6 +98,19 @@ func grade(ex *domain.Exercise, answer json.RawMessage) (bool, json.RawMessage) 
 		sol, _ := json.Marshal(map[string]bool{"answer": key.Answer})
 		return ans.Value == key.Answer, sol
 
+	case TypeSelectWords:
+		// Order-free: the learner must pick exactly the keyed tiles, no more.
+		var key struct {
+			Selected []int `json:"selected"`
+		}
+		var ans struct {
+			Selected []int `json:"selected"`
+		}
+		_ = json.Unmarshal(ex.AnswerKey, &key)
+		_ = json.Unmarshal(answer, &ans)
+		sol, _ := json.Marshal(map[string][]int{"selected": key.Selected})
+		return sameIndexSet(key.Selected, ans.Selected), sol
+
 	case TypeSpeak:
 		// The client records audio, scores it via the pronunciation service, and
 		// submits the achieved overall score. Pass if it meets the minimum.
@@ -130,6 +144,25 @@ func equalSeq(a, b []string) bool {
 	}
 	for i := range a {
 		if normalize(a[i]) != normalize(b[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func sameIndexSet(a, b []int) bool {
+	if len(a) == 0 || len(a) != len(b) {
+		return false
+	}
+	set := map[int]int{}
+	for _, i := range a {
+		set[i]++
+	}
+	for _, i := range b {
+		set[i]--
+	}
+	for _, v := range set {
+		if v != 0 {
 			return false
 		}
 	}

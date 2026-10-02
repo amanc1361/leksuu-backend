@@ -2,10 +2,14 @@ package usecase
 
 import (
 	"bytes"
+	"context"
 	"image"
 	"image/color"
 	"image/png"
+	"strings"
 	"testing"
+
+	"github.com/leksuu/platform/internal/modules/media/store"
 )
 
 func TestEnrichImageDimsAndBlur(t *testing.T) {
@@ -40,5 +44,49 @@ func TestResizeToNeverUpscalesAndKeepsAspect(t *testing.T) {
 	out2 := resizeTo(src, 4000)
 	if out2.Bounds().Dx() != 1000 {
 		t.Fatalf("upscaled to %d, want 1000", out2.Bounds().Dx())
+	}
+}
+
+func TestImportRemoteReusesStoredObject(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.NewLocal(dir, "https://leksuu.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(st, 1<<20)
+	fetches := 0
+	fetch := func(context.Context) ([]byte, string, error) {
+		fetches++
+		return []byte("ID3fake-mp3"), "audio/mpeg", nil
+	}
+	src := "https://cdn.example.com/audio/clip.mp3"
+	first, err := svc.ImportRemote(context.Background(), src, "clip.mp3", fetch)
+	if err != nil || first.Reused {
+		t.Fatalf("first import: reused=%v err=%v", first != nil && first.Reused, err)
+	}
+	second, err := svc.ImportRemote(context.Background(), src, "clip.mp3", fetch)
+	if err != nil || !second.Reused {
+		t.Fatalf("second import should reuse: reused=%v err=%v", second != nil && second.Reused, err)
+	}
+	if fetches != 1 || first.URL != second.URL {
+		t.Fatalf("fetches=%d urls %q vs %q", fetches, first.URL, second.URL)
+	}
+	if !strings.HasPrefix(first.Key, "remote/") || !strings.HasSuffix(first.Key, ".mp3") {
+		t.Fatalf("unexpected key %q", first.Key)
+	}
+}
+
+func TestRemoteExtDropsCDNSuffixes(t *testing.T) {
+	cases := map[string]string{
+		"ecc75f16.jpg@jpg":   ".jpg",
+		"clip.MP3":           ".mp3",
+		"21659016":           "",
+		"file.php?x=1.jpg":   "",
+		"video.mp4?token=ab": ".mp4",
+	}
+	for in, want := range cases {
+		if got := remoteExt(in); got != want {
+			t.Errorf("remoteExt(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

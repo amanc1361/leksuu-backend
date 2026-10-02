@@ -82,12 +82,23 @@ type ChatMessage struct {
 	Content string `json:"content"`
 }
 
-// ChatInput is a level-limited conversation request.
+// ChatScenario turns the chat into a roleplay: the tutor plays AIRole in the
+// described situation and steers the learner toward Goal.
+type ChatScenario struct {
+	Title       string `json:"title"`
+	Goal        string `json:"goal"`
+	AIRole      string `json:"ai_role"`
+	LearnerRole string `json:"learner_role"`
+}
+
+// ChatInput is a level-limited conversation request. With a Scenario and no
+// messages yet, the tutor opens the roleplay.
 type ChatInput struct {
 	Messages   []ChatMessage
 	TargetLang string
 	NativeLang string
 	Level      string
+	Scenario   *ChatScenario
 }
 
 // ChatReply is the tutor's response: a target-language reply plus a translation.

@@ -73,13 +73,30 @@ func (s *S3) Put(ctx context.Context, key, contentType string, data []byte) (str
 	if err != nil {
 		return "", err
 	}
+	return s.URL(key), nil
+}
+
+// URL is where a stored key is served from.
+func (s *S3) URL(key string) string {
 	if s.publicRead {
-		return s.publicBase + "/" + objectKey, nil
+		return s.publicBase + "/" + s.objectKey(key)
 	}
 	// Private bucket: the URL points back at the API, which streams the object.
 	// The prefix is deliberately absent — it is storage layout, not part of the
 	// key the rest of the app knows, and Get re-applies it.
-	return s.publicBase + "/media/" + cleanKey(key), nil
+	return s.publicBase + "/media/" + cleanKey(key)
+}
+
+// Stat reports whether the key already holds an object (one HEAD request).
+func (s *S3) Stat(ctx context.Context, key string) (string, error) {
+	info, err := s.client.StatObject(ctx, s.bucket, s.objectKey(key), minio.StatObjectOptions{})
+	if err != nil {
+		if minio.ToErrorResponse(err).StatusCode == http.StatusNotFound {
+			return "", domain.ErrNotFound
+		}
+		return "", err
+	}
+	return info.ContentType, nil
 }
 
 // Get opens the object for reading. minio's Object turns Seek/Read into ranged
