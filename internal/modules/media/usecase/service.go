@@ -24,8 +24,10 @@ import (
 // intrinsic dimensions (so the client reserves space and avoids layout shift)
 // and a tiny blurred placeholder data URI (LQIP) for an instant blur-up preview.
 type Uploaded struct {
-	URL         string    `json:"url"`
-	Key         string    `json:"key"`
+	URL string `json:"url"`
+	Key string `json:"key"`
+	// Reused is set when a remote import found the object already stored.
+	Reused      bool      `json:"reused,omitempty"`
 	ContentType string    `json:"content_type"`
 	Width       int       `json:"width,omitempty"`
 	Height      int       `json:"height,omitempty"`
@@ -70,7 +72,10 @@ func (s *Service) Upload(ctx context.Context, filename, contentType string, data
 	if !allowed(contentType) {
 		return nil, apperr.New("media.bad_type", apperr.KindValidation)
 	}
-	key := id.New() + ext(filename, contentType)
+	return s.put(ctx, id.New()+ext(filename, contentType), contentType, data)
+}
+
+func (s *Service) put(ctx context.Context, key, contentType string, data []byte) (*Uploaded, error) {
 	url, err := s.store.Put(ctx, key, contentType, data)
 	if err != nil {
 		return nil, apperr.ErrInternal
@@ -81,6 +86,54 @@ func (s *Service) Upload(ctx context.Context, filename, contentType string, data
 		s.makeVariants(ctx, up, key, data)
 	}
 	return up, nil
+}
+
+// Fetch downloads a remote object, returning its bytes and content type.
+type Fetch func(ctx context.Context) (data []byte, contentType string, err error)
+
+// ImportRemote copies a remote asset into the store under a key derived from
+// its source URL, so importing the same course again reuses what is already
+// stored: one HEAD request instead of a download plus an upload.
+func (s *Service) ImportRemote(ctx context.Context, sourceURL, filename string, fetch Fetch) (*Uploaded, error) {
+	sum := sha256.Sum256([]byte(sourceURL))
+	key := "remote/" + hex.EncodeToString(sum[:16]) + remoteExt(filename)
+	if lk, ok := s.store.(domain.Lookup); ok {
+		if ct, err := lk.Stat(ctx, key); err == nil {
+			return &Uploaded{URL: lk.URL(key), Key: key, ContentType: ct, Reused: true}, nil
+		}
+	}
+	data, ct, err := fetch(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(data) == 0 {
+		return nil, apperr.New("media.empty", apperr.KindValidation)
+	}
+	if s.maxBytes > 0 && int64(len(data)) > s.maxBytes {
+		return nil, apperr.New("media.too_large", apperr.KindValidation)
+	}
+	if !allowed(ct) {
+		return nil, apperr.New("media.bad_type", apperr.KindValidation)
+	}
+	return s.put(ctx, key, ct, data)
+}
+
+// remoteExts are the extensions a remote key may keep; anything else (CDN
+// suffixes like "photo.jpg@jpg", extension-less resize URLs) gets none — the
+// stored content type still says what the object is.
+var remoteExts = map[string]bool{
+	".jpg": true, ".jpeg": true, ".png": true, ".gif": true, ".webp": true, ".svg": true,
+	".mp3": true, ".m4a": true, ".ogg": true, ".wav": true, ".mp4": true, ".webm": true,
+}
+
+func remoteExt(name string) string {
+	if i := strings.IndexAny(name, "@?#"); i >= 0 {
+		name = name[:i]
+	}
+	if e := strings.ToLower(filepath.Ext(name)); remoteExts[e] {
+		return e
+	}
+	return ""
 }
 
 // ArchiveJSON stores the exact source used by a course import. The digest in

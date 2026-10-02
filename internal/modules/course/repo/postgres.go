@@ -345,6 +345,67 @@ func (r *PostgresCourseRepo) DeleteItem(ctx context.Context, itemID string) erro
 	return err
 }
 
+// ReplaceImportedItems swaps every imported item of a lesson (source_ref set)
+// for the given set in one transaction, so a failed re-import never leaves a
+// half-filled lesson. Hand-authored items stay first; imported ones follow in
+// the given order. Inserts are pipelined: one round trip for all items, one
+// for all exercises.
+func (r *PostgresCourseRepo) ReplaceImportedItems(ctx context.Context, lessonID string, items []domain.ImportedItem) ([]domain.LessonItem, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM exercises WHERE lesson_item_id IN
+		   (SELECT id FROM lesson_items WHERE lesson_id=$1 AND source_ref IS NOT NULL)`, lessonID); err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM lesson_items WHERE lesson_id=$1 AND source_ref IS NOT NULL`, lessonID); err != nil {
+		return nil, err
+	}
+	var base int
+	if err := tx.QueryRow(ctx, `SELECT COALESCE(max(position),0) FROM lesson_items WHERE lesson_id=$1`, lessonID).Scan(&base); err != nil {
+		return nil, err
+	}
+
+	out := make([]domain.LessonItem, len(items))
+	batch := &pgx.Batch{}
+	for i, it := range items {
+		out[i] = domain.LessonItem{LessonID: lessonID, Position: base + i + 1, Kind: it.Kind, Payload: it.Payload, SourceRef: it.SourceRef}
+		batch.Queue(`INSERT INTO lesson_items (lesson_id, position, kind, payload, source_ref)
+		             VALUES ($1, $2, $3, COALESCE($4,'{}')::jsonb, $5) RETURNING id`,
+			lessonID, out[i].Position, it.Kind, []byte(it.Payload), it.SourceRef)
+	}
+	res := tx.SendBatch(ctx, batch)
+	for i := range out {
+		if err := res.QueryRow().Scan(&out[i].ID); err != nil {
+			res.Close()
+			return nil, err
+		}
+	}
+	if err := res.Close(); err != nil {
+		return nil, err
+	}
+
+	exBatch := &pgx.Batch{}
+	for i, it := range items {
+		for _, e := range it.Exercises {
+			exBatch.Queue(`INSERT INTO exercises (lesson_item_id, type, prompt, answer_key, difficulty) VALUES ($1,$2,$3,$4,$5)`,
+				out[i].ID, e.Type, []byte(e.Prompt), []byte(e.AnswerKey), e.Difficulty)
+		}
+	}
+	if exBatch.Len() > 0 {
+		if err := tx.SendBatch(ctx, exBatch).Close(); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (r *PostgresCourseRepo) ReorderItems(ctx context.Context, lessonID string, orderedIDs []string) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {

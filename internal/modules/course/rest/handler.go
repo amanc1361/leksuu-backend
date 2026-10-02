@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/leksuu/platform/internal/modules/course/domain"
@@ -64,7 +65,9 @@ func exerciseView(e domain.Exercise) map[string]any {
 		if json.Unmarshal(e.AnswerKey, &key) == nil && len(key.Answers) > 0 {
 			a := strings.TrimSpace(key.Answers[0])
 			if a != "" && !strings.ContainsAny(a, " \t\n") {
-				if n := utf8.RuneCountInString(a); n >= 1 && n <= 24 {
+				// Letter cells only accept letters: an answer with an apostrophe
+				// or hyphen ("aren't", "twenty-one") gets the free-text input.
+				if n := utf8.RuneCountInString(a); n >= 1 && n <= 24 && onlyLetters(a) {
 					prompt["answer_len"] = n
 				}
 				// Scaffold: reveal only the first letter, never the word.
@@ -102,6 +105,15 @@ func exerciseView(e domain.Exercise) map[string]any {
 		if json.Unmarshal(e.AnswerKey, &key) == nil && len(key.Order) > 0 {
 			prompt["assist"] = map[string]any{"kind": "first_word", "value": key.Order[0]}
 		}
+	case "select_words":
+		// How many tiles to pick ("Choose the two negative forms") — the count,
+		// never which ones.
+		var key struct {
+			Selected []int `json:"selected"`
+		}
+		if json.Unmarshal(e.AnswerKey, &key) == nil && len(key.Selected) > 0 {
+			prompt["select_count"] = len(key.Selected)
+		}
 	case "match", "match_image":
 		var key struct {
 			Pairs [][]string `json:"pairs"`
@@ -111,6 +123,15 @@ func exerciseView(e domain.Exercise) map[string]any {
 		}
 	}
 	return map[string]any{"id": e.ID, "type": e.Type, "prompt": prompt, "difficulty": e.Difficulty}
+}
+
+func onlyLetters(s string) bool {
+	for _, r := range s {
+		if !unicode.IsLetter(r) {
+			return false
+		}
+	}
+	return true
 }
 
 func itemView(iwe usecase.ItemWithExercises) map[string]any {

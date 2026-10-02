@@ -119,13 +119,14 @@ func (h *Handler) Chat(w http.ResponseWriter, r *http.Request) {
 		TargetLang string               `json:"target_lang"`
 		NativeLang string               `json:"native_lang"`
 		Level      string               `json:"level"`
+		Scenario   *domain.ChatScenario `json:"scenario"`
 	}
 	if json.NewDecoder(r.Body).Decode(&in) != nil {
 		web.Error(w, r, apperr.ErrBadRequest)
 		return
 	}
 	rep, err := h.svc.Chat(r.Context(), domain.ChatInput{
-		Messages: in.Messages, TargetLang: in.TargetLang, NativeLang: in.NativeLang, Level: in.Level,
+		Messages: in.Messages, TargetLang: in.TargetLang, NativeLang: in.NativeLang, Level: in.Level, Scenario: in.Scenario,
 	})
 	if err != nil {
 		web.Error(w, r, err)

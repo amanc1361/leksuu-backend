@@ -30,6 +30,7 @@ type Repository interface {
 	CreateExercise(ctx context.Context, e *coursedomain.Exercise) error
 	Items(ctx context.Context, lessonID string) ([]coursedomain.LessonItem, error)
 	DeleteItem(ctx context.Context, itemID string) error
+	ReplaceImportedItems(ctx context.Context, lessonID string, items []coursedomain.ImportedItem) ([]coursedomain.LessonItem, error)
 	ReorderItems(ctx context.Context, lessonID string, orderedIDs []string) error
 	Units(ctx context.Context, courseID string) ([]coursedomain.Unit, error)
 	Unit(ctx context.Context, id string) (*coursedomain.Unit, error)
@@ -254,6 +255,35 @@ func (s *Service) AddExercise(ctx context.Context, itemID, typ string, prompt, a
 		return nil, err
 	}
 	return e, nil
+}
+
+// maxImportedItems bounds one lesson's import payload (the largest Busuu A1
+// lesson has ~60 nodes).
+const maxImportedItems = 500
+
+// ReplaceImportedItems atomically replaces what earlier imports put in a
+// lesson. Every item needs a kind and a source_ref (that is what marks it as
+// imported), and every exercise a type; the DB CHECKs validate the values.
+func (s *Service) ReplaceImportedItems(ctx context.Context, lessonID string, items []coursedomain.ImportedItem) ([]coursedomain.LessonItem, error) {
+	if lessonID == "" || len(items) > maxImportedItems {
+		return nil, apperr.ErrBadRequest
+	}
+	if _, err := s.repo.Lesson(ctx, lessonID); err != nil {
+		return nil, err
+	}
+	for i := range items {
+		items[i].Kind = strings.TrimSpace(items[i].Kind)
+		items[i].SourceRef = strings.TrimSpace(items[i].SourceRef)
+		if items[i].Kind == "" || items[i].SourceRef == "" {
+			return nil, apperr.ErrBadRequest
+		}
+		for _, e := range items[i].Exercises {
+			if e.Type == "" {
+				return nil, apperr.ErrBadRequest
+			}
+		}
+	}
+	return s.repo.ReplaceImportedItems(ctx, lessonID, items)
 }
 
 func (s *Service) LessonTemplates() []LessonTemplate { return lessonTemplates() }

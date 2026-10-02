@@ -78,3 +78,54 @@ func TestMoveLessonToUnit(t *testing.T) {
 		t.Fatalf("new unit lessons = %+v", got)
 	}
 }
+
+func TestReplaceImportedItemsKeepsHandAuthoredItems(t *testing.T) {
+	ctx := context.Background()
+	repo := courserepo.NewMemoryCourseRepo()
+	svc := NewService(repo, nil)
+
+	course := &coursedomain.Course{Language: "en", CEFR: "A1", Title: "Imported"}
+	if err := repo.CreateCourse(ctx, course); err != nil {
+		t.Fatal(err)
+	}
+	unit := &coursedomain.Unit{CourseID: course.ID, Title: "Basics"}
+	if err := repo.CreateUnit(ctx, unit); err != nil {
+		t.Fatal(err)
+	}
+	lesson, _, err := svc.AddLessonToUnit(ctx, unit.ID, "Hello", "source-1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.AddItem(ctx, lesson.ID, "text", []byte(`{"phrase":"mine"}`), 0, ""); err != nil {
+		t.Fatal(err)
+	}
+	batch := func(n int) []coursedomain.ImportedItem {
+		out := make([]coursedomain.ImportedItem, n)
+		for i := range out {
+			out[i] = coursedomain.ImportedItem{Kind: "exercise", SourceRef: "node", Exercises: []coursedomain.Exercise{
+				{Type: "mcq", Prompt: []byte(`{}`), AnswerKey: []byte(`{"correct":0}`), Difficulty: 1},
+			}}
+		}
+		return out
+	}
+	if _, err := svc.ReplaceImportedItems(ctx, lesson.ID, batch(3)); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := svc.ReplaceImportedItems(ctx, lesson.ID, batch(2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, _ := repo.Items(ctx, lesson.ID)
+	if len(items) != 3 || items[0].SourceRef != "" {
+		t.Fatalf("want the hand-authored item plus 2 imported, got %d items", len(items))
+	}
+	if saved[0].Position != 2 || saved[1].Position != 3 {
+		t.Fatalf("imported items should follow hand-authored ones: %d, %d", saved[0].Position, saved[1].Position)
+	}
+	if exs, _ := repo.Exercises(ctx, saved[1].ID); len(exs) != 1 {
+		t.Fatalf("exercise not stored with its item: %d", len(exs))
+	}
+	if _, err := svc.ReplaceImportedItems(ctx, lesson.ID, []coursedomain.ImportedItem{{Kind: "text"}}); err == nil {
+		t.Fatal("an item without source_ref must be rejected")
+	}
+}

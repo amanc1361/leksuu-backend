@@ -276,6 +276,53 @@ func (h *Handler) CreateItem(w http.ResponseWriter, r *http.Request) {
 	web.JSON(w, http.StatusCreated, map[string]any{"id": it.ID, "position": it.Position, "kind": it.Kind, "source_ref": it.SourceRef})
 }
 
+// maxImportBody caps one lesson's import payload; imported media are URLs, so
+// even a long lesson stays far below this.
+const maxImportBody = 8 << 20
+
+// ReplaceImportedItems is the importer's write path: one request per lesson
+// instead of one per item and exercise.
+func (h *Handler) ReplaceImportedItems(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Items []struct {
+			Kind      string          `json:"kind"`
+			Payload   json.RawMessage `json:"payload"`
+			SourceRef string          `json:"source_ref"`
+			Exercises []struct {
+				Type       string          `json:"type"`
+				Prompt     json.RawMessage `json:"prompt"`
+				AnswerKey  json.RawMessage `json:"answer_key"`
+				Difficulty int             `json:"difficulty"`
+			} `json:"exercises"`
+		} `json:"items"`
+	}
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, maxImportBody)).Decode(&in) != nil {
+		web.Error(w, r, apperr.ErrBadRequest)
+		return
+	}
+	items := make([]coursedomain.ImportedItem, len(in.Items))
+	for i, it := range in.Items {
+		items[i] = coursedomain.ImportedItem{Kind: it.Kind, Payload: it.Payload, SourceRef: it.SourceRef}
+		for _, e := range it.Exercises {
+			d := e.Difficulty
+			if d <= 0 {
+				d = 1
+			}
+			items[i].Exercises = append(items[i].Exercises, coursedomain.Exercise{Type: e.Type, Prompt: e.Prompt, AnswerKey: e.AnswerKey, Difficulty: d})
+		}
+	}
+	saved, err := h.svc.ReplaceImportedItems(r.Context(), r.PathValue("id"), items)
+	if err != nil {
+		web.Error(w, r, err)
+		return
+	}
+	exercises := 0
+	for _, it := range items {
+		exercises += len(it.Exercises)
+	}
+	web.JSON(w, http.StatusOK, map[string]any{"items": len(saved), "exercises": exercises})
+}
+
 func (h *Handler) CreateExercise(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Type       string          `json:"type"`

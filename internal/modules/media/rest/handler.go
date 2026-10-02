@@ -38,49 +38,65 @@ func (h *Handler) ImportRemote(w http.ResponseWriter, r *http.Request) {
 		web.Error(w, r, apperr.ErrBadRequest)
 		return
 	}
-	client := &http.Client{Timeout: 45 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
-		if len(via) >= 5 || !publicHost(req.Context(), req.URL.Hostname()) {
-			return http.ErrUseLastResponse
-		}
-		return nil
-	}}
-	req, _ := http.NewRequestWithContext(r.Context(), http.MethodGet, u.String(), nil)
-	resp, err := client.Do(req)
-	if err != nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		if resp != nil {
-			resp.Body.Close()
-		}
-		web.Error(w, r, apperr.ErrBadRequest)
-		return
-	}
-	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, h.maxBytes+1))
-	if err != nil || int64(len(data)) > h.maxBytes {
-		web.Error(w, r, apperr.New("media.too_large", apperr.KindValidation))
-		return
-	}
 	name := in.Filename
 	if name == "" {
 		name = filepath.Base(u.Path)
 	}
-	ct := in.ContentType
-	if ct == "" {
-		ct = strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"), ";")[0])
-	}
-	if ct == "" {
-		ct = http.DetectContentType(data)
-	}
-	if ct == "application/octet-stream" || ct == "binary/octet-stream" {
-		if inferred := mime.TypeByExtension(filepath.Ext(name)); inferred != "" {
-			ct = strings.TrimSpace(strings.Split(inferred, ";")[0])
+	fetch := func(ctx context.Context) ([]byte, string, error) {
+		client := &http.Client{Timeout: 45 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 5 || !publicHost(req.Context(), req.URL.Hostname()) {
+				return http.ErrUseLastResponse
+			}
+			return nil
+		}}
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+		resp, err := client.Do(req)
+		if err != nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			if resp != nil {
+				resp.Body.Close()
+			}
+			return nil, "", apperr.ErrBadRequest
 		}
+		defer resp.Body.Close()
+		data, err := io.ReadAll(io.LimitReader(resp.Body, h.maxBytes+1))
+		if err != nil || int64(len(data)) > h.maxBytes {
+			return nil, "", apperr.New("media.too_large", apperr.KindValidation)
+		}
+		ct := in.ContentType
+		if ct == "" {
+			ct = strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"), ";")[0])
+		}
+		if ct == "" {
+			ct = http.DetectContentType(data)
+		}
+		if ct == "application/octet-stream" || ct == "binary/octet-stream" {
+			if inferred := mime.TypeByExtension(remoteExtOf(name)); inferred != "" {
+				ct = strings.TrimSpace(strings.Split(inferred, ";")[0])
+			} else {
+				ct = http.DetectContentType(data)
+			}
+		}
+		return data, ct, nil
 	}
-	up, err := h.svc.Upload(r.Context(), name, ct, data)
+	up, err := h.svc.ImportRemote(r.Context(), u.String(), name, fetch)
 	if err != nil {
 		web.Error(w, r, err)
 		return
 	}
-	web.JSON(w, http.StatusCreated, up)
+	status := http.StatusCreated
+	if up.Reused {
+		status = http.StatusOK
+	}
+	web.JSON(w, status, up)
+}
+
+// remoteExtOf is the file extension of a remote name, ignoring CDN suffixes
+// such as "photo.jpg@jpg".
+func remoteExtOf(name string) string {
+	if i := strings.IndexAny(name, "@?#"); i >= 0 {
+		name = name[:i]
+	}
+	return filepath.Ext(name)
 }
 
 func publicHost(ctx context.Context, host string) bool {
