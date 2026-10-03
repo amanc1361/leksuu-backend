@@ -34,7 +34,7 @@ func (h *Handler) ImportRemote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u, err := url.Parse(in.URL)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || !publicHost(r.Context(), u.Hostname()) {
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || strings.EqualFold(u.Hostname(), "localhost") {
 		web.Error(w, r, apperr.ErrBadRequest)
 		return
 	}
@@ -42,7 +42,13 @@ func (h *Handler) ImportRemote(w http.ResponseWriter, r *http.Request) {
 	if name == "" {
 		name = filepath.Base(u.Path)
 	}
+	// The host is checked only when the object must actually be downloaded: a
+	// URL already copied is reused from storage without any network access, so
+	// a re-import cannot lose stored media to a DNS hiccup.
 	fetch := func(ctx context.Context) ([]byte, string, error) {
+		if err := checkPublicHost(ctx, u.Hostname()); err != nil {
+			return nil, "", err
+		}
 		client := &http.Client{Timeout: 45 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 5 || !publicHost(req.Context(), req.URL.Hostname()) {
 				return http.ErrUseLastResponse
@@ -51,9 +57,13 @@ func (h *Handler) ImportRemote(w http.ResponseWriter, r *http.Request) {
 		}}
 		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 		resp, err := client.Do(req)
-		if err != nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			if resp != nil {
-				resp.Body.Close()
+		if err != nil {
+			return nil, "", errFetchFailed
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			resp.Body.Close()
+			if resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests {
+				return nil, "", errFetchFailed
 			}
 			return nil, "", apperr.ErrBadRequest
 		}
@@ -99,20 +109,31 @@ func remoteExtOf(name string) string {
 	return filepath.Ext(name)
 }
 
-func publicHost(ctx context.Context, host string) bool {
+// errFetchFailed is a transient failure to download a remote object (DNS,
+// network, upstream 5xx/429). It maps to a 5xx so import clients retry it,
+// unlike a URL that is invalid or points at a private address.
+var errFetchFailed = apperr.New("media.fetch_failed", apperr.KindInternal)
+
+// checkPublicHost refuses hosts that resolve to private, loopback or
+// link-local addresses (SSRF guard). A failed lookup is transient.
+func checkPublicHost(ctx context.Context, host string) error {
 	if strings.EqualFold(host, "localhost") {
-		return false
+		return apperr.ErrBadRequest
 	}
 	ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
 	if err != nil || len(ips) == 0 {
-		return false
+		return errFetchFailed
 	}
 	for _, ip := range ips {
 		if ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
-			return false
+			return apperr.ErrBadRequest
 		}
 	}
-	return true
+	return nil
+}
+
+func publicHost(ctx context.Context, host string) bool {
+	return checkPublicHost(ctx, host) == nil
 }
 
 func (h *Handler) ArchiveCourseImport(w http.ResponseWriter, r *http.Request) {
@@ -130,11 +151,15 @@ func (h *Handler) ArchiveCourseImport(w http.ResponseWriter, r *http.Request) {
 		web.Error(w, r, err)
 		return
 	}
-	out := map[string]any{"id": result.ID, "file_name": result.FileName, "storage_key": result.StorageKey, "url": result.URL, "content_type": result.ContentType, "content_bytes": result.ContentBytes, "sha256": result.SHA256}
+	out := map[string]any{"id": result.ID, "file_name": result.FileName, "storage_key": result.StorageKey, "url": result.URL, "content_type": result.ContentType, "content_bytes": result.ContentBytes, "sha256": result.SHA256, "reused": result.Reused}
 	if len(in.Metadata) > 0 {
 		out["metadata"] = in.Metadata
 	}
-	web.JSON(w, http.StatusCreated, out)
+	status := http.StatusCreated
+	if result.Reused {
+		status = http.StatusOK
+	}
+	web.JSON(w, status, out)
 }
 
 type Handler struct {

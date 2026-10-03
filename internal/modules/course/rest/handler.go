@@ -42,7 +42,7 @@ func lessonView(l domain.Lesson) map[string]any {
 		obj = json.RawMessage("{}")
 	}
 	return map[string]any{
-		"id": l.ID, "position": l.Position, "title": l.Title,
+		"id": l.ID, "position": l.Position, "title": l.Title, "unit_id": l.UnitID,
 		"cover_url": l.CoverURL, "focus": l.Focus, "objective": obj,
 	}
 }
@@ -168,11 +168,28 @@ func (h *Handler) GetCourse(w http.ResponseWriter, r *http.Request) {
 		web.Error(w, r, err)
 		return
 	}
+	// units carries the chapter hierarchy; lessons is the same lessons in
+	// global learning order (unit by unit). "position" is per unit, so clients
+	// must use this order (or units), never sort lessons by position.
+	units := make([]map[string]any, 0, len(cwl.Units))
+	for _, u := range cwl.Units {
+		ls := make([]map[string]any, 0, len(u.Lessons))
+		for _, l := range u.Lessons {
+			ls = append(ls, lessonView(l))
+		}
+		units = append(units, map[string]any{
+			"id": u.Unit.ID, "position": u.Unit.Position, "title": u.Unit.Title,
+			"description": u.Unit.Description, "lessons": ls,
+		})
+	}
 	lessons := make([]map[string]any, 0, len(cwl.Lessons))
-	for _, l := range cwl.Lessons {
-		lessons = append(lessons, lessonView(l))
+	for i, l := range cwl.Lessons {
+		v := lessonView(l)
+		v["sequence"] = i + 1
+		lessons = append(lessons, v)
 	}
 	body := courseView(cwl.Course)
+	body["units"] = units
 	body["lessons"] = lessons
 	web.JSON(w, http.StatusOK, body)
 }

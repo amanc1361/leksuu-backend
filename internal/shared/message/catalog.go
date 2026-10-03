@@ -82,6 +82,11 @@ var catalog = map[string]map[string]string{
 		LocaleFa:  "درس یافت نشد.",
 		LocaleCkb: "وانەکە نەدۆزرایەوە.",
 	},
+	"lesson.source_conflict": {
+		LocaleEn:  "This unit already has a lesson imported from the same source.",
+		LocaleFa:  "این فصل از قبل درسی از همین منبع دارد.",
+		LocaleCkb: "ئەم بەشە پێشتر وانەیەکی لە هەمان سەرچاوە هەیە.",
+	},
 	"course.item_not_found": {
 		LocaleEn:  "Content item not found.",
 		LocaleFa:  "آیتم محتوا پیدا نشد.",
@@ -116,6 +121,11 @@ var catalog = map[string]map[string]string{
 		LocaleEn:  "Only image, audio, or video files are allowed.",
 		LocaleFa:  "فقط فایل عکس، صدا یا فیلم مجاز است.",
 		LocaleCkb: "تەنها فایلی وێنە، دەنگ یان ڤیدیۆ ڕێگەپێدراوە.",
+	},
+	"media.fetch_failed": {
+		LocaleEn:  "The file could not be downloaded right now. Please try again.",
+		LocaleFa:  "دریافت فایل در حال حاضر ممکن نشد. دوباره تلاش کنید.",
+		LocaleCkb: "ئێستا فایلەکە دانەبەزێنرا. تکایە دووبارە هەوڵ بدەرەوە.",
 	},
 	"user.invalid_cefr": {
 		LocaleEn:  "Invalid level.",

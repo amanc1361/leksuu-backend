@@ -30,6 +30,9 @@ type CourseRepository interface {
 	SetAccessRule(ctx context.Context, rule AccessRule) error
 	DeleteAccessRule(ctx context.Context, entityType, entityID string) error
 	ListAccessRules(ctx context.Context) ([]AccessRule, error)
+	// ContentTranslations returns every stored translation of the given source
+	// hashes (all locales).
+	ContentTranslations(ctx context.Context, hashes []string) ([]ContentTranslation, error)
 }
 
 // ProgressRepository records and summarizes user learning events.

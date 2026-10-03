@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"math/rand"
+	"sort"
 	"time"
 
 	"github.com/leksuu/platform/internal/modules/course/domain"
@@ -57,8 +58,19 @@ func (s *Service) reward(ctx context.Context, userID string, xp int, reason stri
 
 // --- read models (aggregates returned to the delivery layer) ---
 
+// CourseWithLessons is a course with its chapter hierarchy. Units are in
+// position order and each holds its lessons in position order; Lessons is the
+// same lessons flattened in that global learning order (unit by unit), for
+// callers that only need a sequence.
 type CourseWithLessons struct {
 	Course  domain.Course
+	Units   []UnitWithLessons
+	Lessons []domain.Lesson
+}
+
+// UnitWithLessons is one unit (chapter) of a course with its ordered lessons.
+type UnitWithLessons struct {
+	Unit    domain.Unit
 	Lessons []domain.Lesson
 }
 
@@ -139,9 +151,15 @@ func (s *Service) PracticeExercises(ctx context.Context, userID, courseID string
 	return pool, nil
 }
 
-// GetCourse returns a course with its lessons ordered by position.
+// GetCourse returns a course with its units (chapters) and their lessons, both
+// ordered by position. Lessons whose unit is unknown (legacy rows) are kept in
+// a trailing unit with an empty ID rather than dropped.
 func (s *Service) GetCourse(ctx context.Context, id string) (*CourseWithLessons, error) {
 	c, err := s.courses.Course(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	units, err := s.courses.Units(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -149,7 +167,29 @@ func (s *Service) GetCourse(ctx context.Context, id string) (*CourseWithLessons,
 	if err != nil {
 		return nil, err
 	}
-	return &CourseWithLessons{Course: *c, Lessons: lessons}, nil
+	out := &CourseWithLessons{Course: *c, Units: make([]UnitWithLessons, len(units))}
+	at := make(map[string]int, len(units))
+	for i, u := range units {
+		out.Units[i] = UnitWithLessons{Unit: u}
+		at[u.ID] = i
+	}
+	var orphans []domain.Lesson
+	for _, l := range lessons {
+		if i, ok := at[l.UnitID]; ok {
+			out.Units[i].Lessons = append(out.Units[i].Lessons, l)
+		} else {
+			orphans = append(orphans, l)
+		}
+	}
+	for _, u := range out.Units {
+		sort.SliceStable(u.Lessons, func(a, b int) bool { return u.Lessons[a].Position < u.Lessons[b].Position })
+		out.Lessons = append(out.Lessons, u.Lessons...)
+	}
+	if len(orphans) > 0 {
+		out.Units = append(out.Units, UnitWithLessons{Lessons: orphans})
+		out.Lessons = append(out.Lessons, orphans...)
+	}
+	return out, nil
 }
 
 // GetLesson returns a lesson with its items (ordered) and each item's exercises.
@@ -163,6 +203,7 @@ func (s *Service) GetLesson(ctx context.Context, id string) (*LessonWithItems, e
 		return nil, err
 	}
 	out := &LessonWithItems{Lesson: *l, Items: make([]ItemWithExercises, 0, len(items))}
+	items = s.localizeItems(ctx, items)
 	for _, it := range items {
 		var exs []domain.Exercise
 		if it.Kind == domain.KindExercise {
@@ -173,6 +214,38 @@ func (s *Service) GetLesson(ctx context.Context, id string) (*LessonWithItems, e
 		out.Items = append(out.Items, ItemWithExercises{Item: it, Exercises: exs})
 	}
 	return out, nil
+}
+
+// localizeItems adds stored translations of explanatory text (grammar tips) to
+// item payloads, for every locale that has one; the learner client picks its
+// own. Best-effort: on a lookup error the items are served untranslated.
+func (s *Service) localizeItems(ctx context.Context, items []domain.LessonItem) []domain.LessonItem {
+	var hashes []string
+	for _, it := range items {
+		for _, ls := range domain.LocalizableStrings(it.Kind, it.Payload) {
+			hashes = append(hashes, domain.SourceHash(ls.Text))
+		}
+	}
+	if len(hashes) == 0 {
+		return items
+	}
+	stored, err := s.courses.ContentTranslations(ctx, hashes)
+	if err != nil || len(stored) == 0 {
+		return items
+	}
+	tr := map[string]map[string]string{}
+	for _, t := range stored {
+		if tr[t.SourceHash] == nil {
+			tr[t.SourceHash] = map[string]string{}
+		}
+		tr[t.SourceHash][t.Locale] = t.Text
+	}
+	out := make([]domain.LessonItem, len(items))
+	for i, it := range items {
+		it.Payload = domain.LocalizePayload(it.Kind, it.Payload, tr)
+		out[i] = it
+	}
+	return out
 }
 
 // CompleteLesson records a lesson completion for the user (validates existence).

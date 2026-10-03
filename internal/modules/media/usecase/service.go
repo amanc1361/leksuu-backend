@@ -44,6 +44,9 @@ type ArchivedJSON struct {
 	ContentType  string `json:"content_type"`
 	ContentBytes int    `json:"content_bytes"`
 	SHA256       string `json:"sha256"`
+	// Reused is set when an identical document (same SHA-256 and name) was
+	// already archived; nothing new is written.
+	Reused bool `json:"reused,omitempty"`
 }
 
 // Variant is a resized rendition for responsive delivery (srcset).
@@ -149,6 +152,11 @@ func (s *Service) ArchiveJSON(ctx context.Context, filename string, data []byte)
 		name = "course-import"
 	}
 	key := "imports/" + digest[:16] + "-" + name + ".json"
+	if lk, ok := s.store.(domain.Lookup); ok {
+		if _, err := lk.Stat(ctx, key); err == nil {
+			return &ArchivedJSON{ID: digest, FileName: filename, StorageKey: key, URL: lk.URL(key), ContentType: "application/json", ContentBytes: len(data), SHA256: digest, Reused: true}, nil
+		}
+	}
 	url, err := s.store.Put(ctx, key, "application/json", data)
 	if err != nil {
 		return nil, apperr.ErrInternal

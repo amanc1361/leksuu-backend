@@ -3,7 +3,12 @@
 // from the Position field — never hardcoded (a hard spec constraint).
 package domain
 
-import "encoding/json"
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"strings"
+)
 
 // CEFR levels and item/exercise kinds mirror the database CHECK constraints, so
 // the vocabulary lives in one place instead of as scattered string literals.
@@ -35,6 +40,7 @@ type Course struct {
 	ImageURL    string
 	Version     int
 	Published   bool
+	SourceID    string // stable external ID of an imported course pack; empty when hand-authored
 }
 
 // Lesson is an ordered unit within a course (order = Position).
@@ -45,6 +51,7 @@ type Unit struct {
 	Position    int
 	Title       string
 	Description string
+	SourceID    string // stable external chapter ID (e.g. a Busuu chapter id); empty when hand-authored
 }
 
 type Lesson struct {
@@ -84,6 +91,37 @@ type ImportedItem struct {
 	Exercises []Exercise
 }
 
+// ImportedItemsResult reports how a lesson's imported items were synced. Items
+// are matched by (SourceRef, occurrence) so a re-import keeps their IDs (and the
+// learner data hanging off them) instead of deleting and recreating them.
+type ImportedItemsResult struct {
+	Items     []LessonItem
+	Created   int
+	Updated   int
+	Unchanged int
+	Removed   int
+}
+
+// ContentTranslation is a translation of one imported source string (a grammar
+// explanation, a table label) into a learner locale. It is keyed by a hash of
+// the exact source text and lives outside the lesson payload, so the source is
+// never overwritten and re-imports keep the translation.
+type ContentTranslation struct {
+	SourceHash string
+	Locale     string
+	SourceLang string
+	SourceText string
+	Text       string
+	Origin     string // human | machine | source
+}
+
+// Translation origins.
+const (
+	OriginHuman   = "human"
+	OriginMachine = "machine"
+	OriginSource  = "source"
+)
+
 // Exercise is an interactive task attached to a lesson item. AnswerKey is the
 // solution and must never be exposed to learners by the delivery layer.
 type Exercise struct {
@@ -110,4 +148,10 @@ type AccessRule struct {
 	EntityType  string `json:"entity_type"` // course | unit | lesson
 	EntityID    string `json:"entity_id"`
 	Requirement string `json:"requirement"` // free | courses | classes
+}
+
+// SourceHash is the content_translations key of a source string.
+func SourceHash(text string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(text)))
+	return hex.EncodeToString(sum[:])
 }
