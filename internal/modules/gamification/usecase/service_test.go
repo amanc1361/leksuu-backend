@@ -96,11 +96,19 @@ func TestDailyMixOncePerDay(t *testing.T) {
 		t.Fatalf("fresh status: %+v err=%v", st, err)
 	}
 
+	// No server-observed activity today: the bonus is not handed out.
+	if _, err := s.CompleteDailyMix(ctx, "u1"); err == nil {
+		t.Fatal("the bonus must require some activity first")
+	}
+	if err := s.Award(ctx, "u1", 2, "srs_review"); err != nil {
+		t.Fatal(err)
+	}
+
 	v1, err := s.CompleteDailyMix(ctx, "u1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !v1.Completed || v1.XP != v1.BonusXP {
+	if !v1.Completed || v1.XP != 2+v1.BonusXP {
 		t.Fatalf("first completion: %+v", v1)
 	}
 
@@ -115,11 +123,12 @@ func TestDailyMixOncePerDay(t *testing.T) {
 
 	// Next day: claimable again.
 	now = now.Add(24 * time.Hour)
+	_ = s.Award(ctx, "u1", 2, "srs_review")
 	v3, err := s.CompleteDailyMix(ctx, "u1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v3.XP != v1.XP+v1.BonusXP {
+	if v3.XP != v1.XP+2+v1.BonusXP {
 		t.Fatalf("next-day award: %d", v3.XP)
 	}
 }
@@ -236,4 +245,49 @@ func TestWeeklyRecapOncePerUser(t *testing.T) {
 
 func contains(hay, needle string) bool {
 	return len(hay) >= len(needle) && (hay == needle || strings.Contains(hay, needle))
+}
+
+type dueQueue int
+
+func (d dueQueue) DueCount(context.Context, string) (int, error) { return int(d), nil }
+
+func TestDailyMixRequiresEmptyReviewQueue(t *testing.T) {
+	now := time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC)
+	s := usecase.NewService(repo.NewMemoryRepo(), func() time.Time { return now })
+	ctx := context.Background()
+	_ = s.Award(ctx, "u1", 5, "lesson")
+	s.SetReviewQueue(dueQueue(3))
+	if _, err := s.CompleteDailyMix(ctx, "u1"); err == nil {
+		t.Fatal("due reviews left: the bonus must wait")
+	}
+	s.SetReviewQueue(dueQueue(0))
+	if v, err := s.CompleteDailyMix(ctx, "u1"); err != nil || !v.Completed {
+		t.Fatalf("queue cleared: %+v err=%v", v, err)
+	}
+}
+
+// Every award lands in the daily goal and the weekly league, and a one-time
+// event is rewarded once however often it is reported.
+func TestAwardUpdatesDailyGoalAndAwardOnceIsIdempotent(t *testing.T) {
+	now := time.Date(2026, 7, 2, 10, 0, 0, 0, time.UTC)
+	s := usecase.NewService(repo.NewMemoryRepo(), func() time.Time { return now })
+	ctx := context.Background()
+	for i := 0; i < 3; i++ {
+		ok, err := s.AwardOnce(ctx, "u1", "lesson:L1", 20, "lesson_complete")
+		if err != nil || ok != (i == 0) {
+			t.Fatalf("AwardOnce #%d: ok=%v err=%v", i+1, ok, err)
+		}
+	}
+	_ = s.Award(ctx, "u1", 10, "exercise_correct")
+	v, err := s.GetState(ctx, "u1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.State.XP != 30 || v.State.Gems != 30 || v.Today.EarnedXP != 30 {
+		t.Fatalf("xp=%d gems=%d today=%d, want 30/30/30", v.State.XP, v.State.Gems, v.Today.EarnedXP)
+	}
+	lb, err := s.Leaderboard(ctx, "u1", 10)
+	if err != nil || lb.MyXP != 30 || lb.MyRank != 1 {
+		t.Fatalf("league: %+v err=%v", lb, err)
+	}
 }

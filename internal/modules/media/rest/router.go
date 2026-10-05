@@ -28,9 +28,9 @@ func (h *Handler) Mount(mux *http.ServeMux, prefix string, guard Guard, store do
 	switch s := store.(type) {
 	case domain.LocalDir:
 		fs := http.StripPrefix("/media/", http.FileServer(http.Dir(s.Dir())))
-		mux.Handle("GET /media/{file...}", longCache(fs))
+		mux.Handle("GET /media/{file...}", inert(longCache(fs)))
 	case domain.Reader:
-		mux.Handle("GET /media/{file...}", longCache(serveBlob(s)))
+		mux.Handle("GET /media/{file...}", inert(longCache(serveBlob(s))))
 	}
 }
 
@@ -60,6 +60,19 @@ func serveBlob(rd domain.Reader) http.Handler {
 			w.Header().Set("Content-Type", blob.ContentType)
 		}
 		http.ServeContent(w, r, path.Base(key), blob.ModTime, blob.Body)
+	})
+}
+
+// inert keeps stored files from ever acting as part of the site: the browser
+// must trust the served content type (nosniff), and a file opened directly
+// renders in a sandbox with no script and an opaque origin, so even an HTML or
+// SVG document stored by an older version can never read the app's session.
+// Neither header affects images, audio or video embedded in a page.
+func inert(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Content-Security-Policy", "sandbox")
+		next.ServeHTTP(w, r)
 	})
 }
 

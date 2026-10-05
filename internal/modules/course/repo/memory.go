@@ -397,6 +397,38 @@ func (r *MemoryCourseRepo) Exercise(_ context.Context, id string) (*domain.Exerc
 	return nil, domain.ErrExerciseNotFound
 }
 
+// ExerciseLessonID returns the lesson an exercise belongs to.
+func (r *MemoryCourseRepo) ExerciseLessonID(_ context.Context, exerciseID string) (string, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for itemID, list := range r.exs {
+		for _, e := range list {
+			if e.ID != exerciseID {
+				continue
+			}
+			for lessonID, items := range r.items {
+				for _, it := range items {
+					if it.ID == itemID {
+						return lessonID, nil
+					}
+				}
+			}
+		}
+	}
+	return "", domain.ErrExerciseNotFound
+}
+
+// LessonItemCounts returns the number of items of every lesson in a course.
+func (r *MemoryCourseRepo) LessonItemCounts(_ context.Context, courseID string) (map[string]int, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make(map[string]int, len(r.lessons[courseID]))
+	for _, l := range r.lessons[courseID] {
+		out[l.ID] = len(r.items[l.ID])
+	}
+	return out, nil
+}
+
 func (r *MemoryCourseRepo) LessonCount(_ context.Context, courseID string) (int, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -649,6 +681,24 @@ func (r *MemoryProgressRepo) ExerciseAttempts(_ context.Context, userID, exercis
 		}
 	}
 	return n, nil
+}
+
+// AttemptedExercises reports which of the given exercises the user has
+// answered at least once.
+func (r *MemoryProgressRepo) AttemptedExercises(_ context.Context, userID string, exerciseIDs []string) (map[string]bool, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	want := make(map[string]bool, len(exerciseIDs))
+	for _, id := range exerciseIDs {
+		want[id] = true
+	}
+	out := map[string]bool{}
+	for _, e := range r.entries {
+		if e.UserID == userID && e.EntityType == domain.EntityExercise && want[e.EntityID] {
+			out[e.EntityID] = true
+		}
+	}
+	return out, nil
 }
 
 func (r *MemoryProgressRepo) CompletedLessons(_ context.Context, userID, courseID string) (int, error) {

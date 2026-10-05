@@ -10,7 +10,17 @@ const (
 	L10nRule  = "rule"  // the explanation (native-language content)
 	L10nTitle = "title" // the tip's own heading
 	L10nTable = "table" // a table cell; only labels ("more formal") should get a translation
+	// L10nPhrase is the meaning of a taught phrase card ("Hello!" → «سلام!»):
+	// shown under the phrase and used as the back of its review card.
+	L10nPhrase = "phrase"
 )
+
+// phrasePayload is the part of a phrase card (item "text") that is localized.
+type phrasePayload struct {
+	Phrase      string            `json:"phrase"`
+	SourceLang  string            `json:"source_lang"`
+	Translation map[string]string `json:"translation"`
+}
 
 // LocalizableString is one source string of an item that may be shown in the
 // learner's language.
@@ -46,6 +56,17 @@ func (p grammarPayload) lang() string {
 // language examples (forms with audio, examples) are never listed, so they
 // always stay in the language being taught.
 func LocalizableStrings(kind string, payload json.RawMessage) []LocalizableString {
+	if kind == KindText && len(payload) > 0 {
+		var p phrasePayload
+		if json.Unmarshal(payload, &p) != nil || strings.TrimSpace(p.Phrase) == "" {
+			return nil
+		}
+		lang := p.SourceLang
+		if lang == "" {
+			lang = "en"
+		}
+		return []LocalizableString{{Kind: L10nPhrase, Text: strings.TrimSpace(p.Phrase), Lang: lang}}
+	}
 	if kind != KindGrammar || len(payload) == 0 {
 		return nil
 	}
@@ -78,6 +99,9 @@ func LocalizableStrings(kind string, payload json.RawMessage) []LocalizableStrin
 // no text of its own for that locale, and title/table translations go into
 // title_tr / subject_tr / form_tr. tr maps source hash -> locale -> text.
 func LocalizePayload(kind string, payload json.RawMessage, tr map[string]map[string]string) json.RawMessage {
+	if kind == KindText {
+		return localizePhrase(payload, tr)
+	}
 	if kind != KindGrammar || len(payload) == 0 || len(tr) == 0 {
 		return payload
 	}
@@ -127,6 +151,44 @@ func LocalizePayload(kind string, payload json.RawMessage, tr map[string]map[str
 	if !changed {
 		return payload
 	}
+	out, err := json.Marshal(doc)
+	if err != nil {
+		return payload
+	}
+	return out
+}
+
+// localizePhrase fills translation[locale] of a phrase card from stored
+// translations, only for locales the card does not already carry itself.
+func localizePhrase(payload json.RawMessage, tr map[string]map[string]string) json.RawMessage {
+	if len(payload) == 0 || len(tr) == 0 {
+		return payload
+	}
+	var src phrasePayload
+	var doc map[string]any
+	if json.Unmarshal(payload, &src) != nil || json.Unmarshal(payload, &doc) != nil {
+		return payload
+	}
+	found := tr[SourceHash(src.Phrase)]
+	if strings.TrimSpace(src.Phrase) == "" || len(found) == 0 {
+		return payload
+	}
+	meaning, _ := doc["translation"].(map[string]any)
+	if meaning == nil {
+		meaning = map[string]any{}
+	}
+	changed := false
+	for loc, text := range found {
+		if own, ok := meaning[loc].(string); ok && strings.TrimSpace(own) != "" {
+			continue
+		}
+		meaning[loc] = text
+		changed = true
+	}
+	if !changed {
+		return payload
+	}
+	doc["translation"] = meaning
 	out, err := json.Marshal(doc)
 	if err != nil {
 		return payload

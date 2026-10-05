@@ -41,7 +41,7 @@ func TestGetCourseReturnsUnitHierarchyInSourceOrder(t *testing.T) {
 	add(ch1, "1.1", 1)
 	add(ch1, "1.3", 3)
 
-	got, err := svc.GetCourse(ctx, c.ID)
+	got, err := svc.GetCourse(ctx, usecase.Viewer{Admin: true}, c.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func TestGetLessonAddsTranslationsWithoutTouchingSource(t *testing.T) {
 		{SourceHash: domain.SourceHash("How are you?"), Locale: "fa", SourceText: "How are you?", Text: "حالت چطور است؟", Origin: "human"},
 	})
 
-	lwi, err := svc.GetLesson(ctx, l.ID)
+	lwi, err := svc.GetLesson(ctx, usecase.Viewer{Admin: true}, l.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

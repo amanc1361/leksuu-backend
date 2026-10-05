@@ -114,6 +114,14 @@ func exerciseView(e domain.Exercise) map[string]any {
 		if json.Unmarshal(e.AnswerKey, &key) == nil && len(key.Selected) > 0 {
 			prompt["select_count"] = len(key.Selected)
 		}
+	case "fill_gaps":
+		// How many gaps to fill — never their answers.
+		var key struct {
+			Gaps [][]string `json:"gaps"`
+		}
+		if json.Unmarshal(e.AnswerKey, &key) == nil && len(key.Gaps) > 0 {
+			prompt["gap_count"] = len(key.Gaps)
+		}
 	case "match", "match_image":
 		var key struct {
 			Pairs [][]string `json:"pairs"`
@@ -162,8 +170,18 @@ func (h *Handler) ListCourses(w http.ResponseWriter, r *http.Request) {
 	web.JSON(w, http.StatusOK, map[string]any{"courses": out})
 }
 
+// viewerOf is the caller of a request: anonymous unless a principal was
+// published by the auth middleware.
+func viewerOf(r *http.Request) usecase.Viewer {
+	p, ok := authn.FromContext(r.Context())
+	if !ok {
+		return usecase.Viewer{}
+	}
+	return usecase.Viewer{UserID: p.Subject, Admin: p.HasRole("admin")}
+}
+
 func (h *Handler) GetCourse(w http.ResponseWriter, r *http.Request) {
-	cwl, err := h.svc.GetCourse(r.Context(), r.PathValue("id"))
+	cwl, err := h.svc.GetCourse(r.Context(), viewerOf(r), r.PathValue("id"))
 	if err != nil {
 		web.Error(w, r, err)
 		return
@@ -230,7 +248,7 @@ func (h *Handler) MediaLibrary(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) GetLesson(w http.ResponseWriter, r *http.Request) {
-	lwi, err := h.svc.GetLesson(r.Context(), r.PathValue("id"))
+	lwi, err := h.svc.GetLesson(r.Context(), viewerOf(r), r.PathValue("id"))
 	if err != nil {
 		web.Error(w, r, err)
 		return
@@ -242,6 +260,7 @@ func (h *Handler) GetLesson(w http.ResponseWriter, r *http.Request) {
 	body := lessonView(lwi.Lesson)
 	body["course_id"] = lwi.Lesson.CourseID
 	body["items"] = items
+	body["locked"] = lwi.Locked
 	web.JSON(w, http.StatusOK, body)
 }
 
@@ -253,11 +272,12 @@ func (h *Handler) CompleteLesson(w http.ResponseWriter, r *http.Request) {
 		web.Error(w, r, apperr.ErrInternal)
 		return
 	}
-	if err := h.svc.CompleteLesson(r.Context(), p.Subject, r.PathValue("id")); err != nil {
+	res, err := h.svc.CompleteLesson(r.Context(), usecase.Viewer{UserID: p.Subject, Admin: p.HasRole("admin")}, r.PathValue("id"))
+	if err != nil {
 		web.Error(w, r, err)
 		return
 	}
-	web.JSON(w, http.StatusOK, map[string]string{"status": domain.StatusCompleted})
+	web.JSON(w, http.StatusOK, map[string]any{"status": domain.StatusCompleted, "awarded_xp": res.AwardedXP})
 }
 
 func (h *Handler) AnswerExercise(w http.ResponseWriter, r *http.Request) {
@@ -273,7 +293,7 @@ func (h *Handler) AnswerExercise(w http.ResponseWriter, r *http.Request) {
 		web.Error(w, r, apperr.ErrBadRequest)
 		return
 	}
-	res, err := h.svc.GradeExercise(r.Context(), p.Subject, r.PathValue("id"), in.Answer)
+	res, err := h.svc.GradeExercise(r.Context(), usecase.Viewer{UserID: p.Subject, Admin: p.HasRole("admin")}, r.PathValue("id"), in.Answer)
 	if err != nil {
 		web.Error(w, r, err)
 		return
@@ -301,8 +321,13 @@ func (h *Handler) CourseProgress(w http.ResponseWriter, r *http.Request) {
 // QuickPractice serves a small set of random gradeable exercises for a light
 // review session. Answer keys are stripped via exerciseView, same as browse.
 func (h *Handler) QuickPractice(w http.ResponseWriter, r *http.Request) {
+	p, ok := authn.FromContext(r.Context())
+	if !ok {
+		web.Error(w, r, apperr.ErrInternal)
+		return
+	}
 	n := mediaQInt(r, "n", 5)
-	exs, err := h.svc.QuickPractice(r.Context(), n)
+	exs, err := h.svc.QuickPractice(r.Context(), p.Subject, n)
 	if err != nil {
 		web.Error(w, r, err)
 		return

@@ -18,6 +18,10 @@ RUN CGO_ENABLED=0 GOOS=linux go build -tags pgx,s3 -ldflags="-s -w" -o /out/api 
 # ---- runtime stage: minimal, non-root ----
 FROM alpine:3.20 AS runtime
 RUN apk add --no-cache ca-certificates tzdata && adduser -D -u 10001 app
+# Writable data directories owned by the runtime user. A fresh named volume
+# mounted on /data/media copies this ownership, so uploads work on a clean
+# install; /app holds the default recordings scratch directory.
+RUN mkdir -p /data/media /app/recordings-tmp && chown -R app:app /data/media /app
 WORKDIR /app
 COPY --from=build /out/api /out/migrate /usr/local/bin/
 COPY migrations ./migrations

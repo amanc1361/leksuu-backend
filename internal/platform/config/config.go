@@ -3,6 +3,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"strconv"
 	"strings"
@@ -95,7 +96,7 @@ func Load() Config {
 		BillingFailURL:         env("BILLING_FAIL_URL", "http://localhost:3000/fa/billing/fail"),
 		CORSOrigins:            splitList(env("CORS_ORIGIN", "http://localhost:3000,https://leksuu.ir,https://www.leksuu.ir")),
 		AdminEmails:            splitList(env("ADMIN_EMAILS", "admin@leksuu.app")),
-		AdminPassword:          env("ADMIN_PASSWORD", "leksuu-admin"),
+		AdminPassword:          env("ADMIN_PASSWORD", DefaultAdminPassword),
 		AccessTTL:              15 * time.Minute,
 		RefreshTTL:             30 * 24 * time.Hour,
 		MediaDir:               env("MEDIA_DIR", "./media-data"),
@@ -124,6 +125,32 @@ func Load() Config {
 		ReminderLeadMin:     atoiDefault(env("REMINDER_LEAD_MIN", "15")),
 		ReminderIntervalSec: atoiDefault(env("REMINDER_INTERVAL_SEC", "60")),
 	}
+}
+
+// DefaultAdminPassword is the development bootstrap password. Production never
+// creates an account with it (see app.New).
+const DefaultAdminPassword = "leksuu-admin"
+
+// IsProduction reports whether this process is the production deployment.
+func (c Config) IsProduction() bool { return strings.EqualFold(strings.TrimSpace(c.Env), "production") }
+
+// placeholderSecrets are example values shipped in docs and compose files.
+var placeholderSecrets = map[string]bool{
+	"": true, "dev-only-change-me": true, "change-me-in-prod": true, "change_me": true, "changeme": true, "change-me": true,
+}
+
+// Validate refuses a configuration that is unsafe to run in production: tokens
+// signed with a published example secret could be forged by anyone. Other
+// development defaults are neutralized at wiring time instead (simulated
+// payments are disabled, the default admin password is never used).
+func (c Config) Validate() error {
+	if !c.IsProduction() {
+		return nil
+	}
+	if placeholderSecrets[strings.ToLower(strings.TrimSpace(c.JWTSecret))] {
+		return errors.New("config: JWT_SECRET is empty or a placeholder; set a long random secret for production")
+	}
+	return nil
 }
 
 // splitList parses a comma-separated env value into a trimmed, lowercased list.

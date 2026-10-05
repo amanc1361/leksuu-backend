@@ -151,6 +151,40 @@ func (r *PostgresCourseRepo) LessonCount(ctx context.Context, courseID string) (
 	return n, err
 }
 
+// ExerciseLessonID returns the lesson an exercise belongs to.
+func (r *PostgresCourseRepo) ExerciseLessonID(ctx context.Context, exerciseID string) (string, error) {
+	var id string
+	err := r.pool.QueryRow(ctx,
+		`SELECT li.lesson_id::text FROM exercises e JOIN lesson_items li ON li.id = e.lesson_item_id WHERE e.id=$1`,
+		exerciseID).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", domain.ErrExerciseNotFound
+	}
+	return id, err
+}
+
+// LessonItemCounts returns the number of items of every lesson in a course.
+func (r *PostgresCourseRepo) LessonItemCounts(ctx context.Context, courseID string) (map[string]int, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT l.id::text, count(li.id)
+		   FROM lessons l LEFT JOIN lesson_items li ON li.lesson_id = l.id
+		  WHERE l.course_id=$1 GROUP BY l.id`, courseID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var id string
+		var n int
+		if err := rows.Scan(&id, &n); err != nil {
+			return nil, err
+		}
+		out[id] = n
+	}
+	return out, rows.Err()
+}
+
 // --- progress ---
 
 type PostgresProgressRepo struct{ pool *pgxpool.Pool }
@@ -173,6 +207,30 @@ func (r *PostgresProgressRepo) ExerciseAttempts(ctx context.Context, userID, exe
 		`SELECT count(*) FROM user_progress
 		  WHERE user_id=$1 AND entity_type='exercise' AND entity_id=$2`, userID, exerciseID).Scan(&n)
 	return n, err
+}
+
+// AttemptedExercises reports which of the given exercises the user has
+// answered at least once.
+func (r *PostgresProgressRepo) AttemptedExercises(ctx context.Context, userID string, exerciseIDs []string) (map[string]bool, error) {
+	out := map[string]bool{}
+	if len(exerciseIDs) == 0 {
+		return out, nil
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT DISTINCT entity_id::text FROM user_progress
+		  WHERE user_id=$1 AND entity_type='exercise' AND entity_id::text = ANY($2::text[])`, userID, exerciseIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
 }
 
 func (r *PostgresProgressRepo) CompletedLessons(ctx context.Context, userID, courseID string) (int, error) {
