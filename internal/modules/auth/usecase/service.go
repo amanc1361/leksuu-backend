@@ -3,7 +3,6 @@ package usecase
 import (
 	"context"
 	"errors"
-	"net/mail"
 	"strings"
 	"time"
 
@@ -28,38 +27,6 @@ type Service struct {
 	cfg         Config
 	adminEmails map[string]bool
 	subLookup   SubscriptionLookup
-	onChange    func(userID string)
-}
-
-// OnAccountChange registers a callback run after a user's status or roles
-// change, so cached authorization state (the request authenticator) is
-// dropped immediately.
-func (s *Service) OnAccountChange(f func(userID string)) { s.onChange = f }
-
-func (s *Service) changed(userID string) {
-	if s.onChange != nil {
-		s.onChange(userID)
-	}
-}
-
-// AccountState reports whether a user may use the API and their current
-// roles. A missing user is simply inactive.
-func (s *Service) AccountState(ctx context.Context, userID string) (bool, []string, error) {
-	u, err := s.users.ByID(ctx, userID)
-	if err != nil {
-		if errors.Is(err, domain.ErrUserNotFound) {
-			return false, nil, nil
-		}
-		return false, nil, err
-	}
-	if !u.IsActive() {
-		return false, nil, nil
-	}
-	roles, err := s.users.Roles(ctx, userID)
-	if err != nil {
-		return false, nil, err
-	}
-	return true, roles, nil
 }
 
 // SubscriptionLookup enriches the admin user list with active products per user.
@@ -110,9 +77,6 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (*domain.User,
 	email := normalizeEmail(in.Email)
 	if email == "" {
 		return nil, domain.ErrEmailRequired
-	}
-	if !validEmail(email) {
-		return nil, domain.ErrEmailInvalid
 	}
 	if in.Password == "" {
 		return nil, domain.ErrPasswordRequired
@@ -165,12 +129,6 @@ func (s *Service) Refresh(ctx context.Context, rawRefresh, deviceID string) (*To
 		return nil, domain.ErrTokenReuse
 	}
 	if rt.IsExpired(s.clock()) {
-		return nil, domain.ErrTokenInvalid
-	}
-	// A suspended (or deleted) account cannot mint new tokens: its session
-	// family is revoked so the refresh token is dead for good.
-	if u, err := s.users.ByID(ctx, rt.UserID); err != nil || !u.IsActive() {
-		_ = s.tokens.RevokeFamily(ctx, rt.FamilyID)
 		return nil, domain.ErrTokenInvalid
 	}
 	if err := s.tokens.Revoke(ctx, rt.ID); err != nil {
@@ -255,7 +213,6 @@ func (s *Service) CreateUser(ctx context.Context, email, displayName, password s
 
 // RemoveRole revokes a role from a user (idempotent at the repo level).
 func (s *Service) RemoveRole(ctx context.Context, userID, role string) error {
-	defer s.changed(userID)
 	return s.users.RemoveRole(ctx, userID, role)
 }
 
@@ -322,7 +279,6 @@ func (s *Service) EnsureAdmin(ctx context.Context, email, password string) error
 // Profile returns the user behind an authenticated request (for /me).
 // AssignRole grants a role to a user (idempotent at the repo level).
 func (s *Service) AssignRole(ctx context.Context, userID, role string) error {
-	defer s.changed(userID)
 	return s.users.AssignRole(ctx, userID, role)
 }
 
@@ -425,7 +381,6 @@ func (s *Service) SetUserRole(ctx context.Context, userID, role string, enabled 
 	if _, err := s.users.ByID(ctx, userID); err != nil {
 		return apperr.New("auth.user_not_found", apperr.KindNotFound)
 	}
-	defer s.changed(userID)
 	if enabled {
 		return s.users.AssignRole(ctx, userID, role)
 	}
@@ -441,7 +396,6 @@ func (s *Service) SetUserStatus(ctx context.Context, userID, status string) erro
 	if _, err := s.users.ByID(ctx, userID); err != nil {
 		return apperr.New("auth.user_not_found", apperr.KindNotFound)
 	}
-	defer s.changed(userID)
 	return s.users.SetStatus(ctx, userID, status)
 }
 
@@ -531,18 +485,3 @@ func (s *Service) issue(ctx context.Context, userID, familyID, deviceID string) 
 }
 
 func normalizeEmail(e string) string { return strings.TrimSpace(strings.ToLower(e)) }
-
-// validEmail accepts a plain address ("name@example.com"): exactly what
-// net/mail parses, with no display name, and a dotted domain.
-func validEmail(e string) bool {
-	if len(e) > 254 || strings.ContainsAny(e, " <>") {
-		return false
-	}
-	a, err := mail.ParseAddress(e)
-	if err != nil || a.Address != e {
-		return false
-	}
-	at := strings.LastIndexByte(e, '@')
-	domainPart := e[at+1:]
-	return at > 0 && strings.Contains(domainPart, ".") && !strings.HasPrefix(domainPart, ".") && !strings.HasSuffix(domainPart, ".")
-}

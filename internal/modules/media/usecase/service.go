@@ -10,8 +10,7 @@ import (
 	"image/color"
 	_ "image/gif" // register GIF decoder
 	"image/jpeg"
-	"image/png"
-	"net/http"
+	_ "image/png" // register PNG decoder
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -45,9 +44,6 @@ type ArchivedJSON struct {
 	ContentType  string `json:"content_type"`
 	ContentBytes int    `json:"content_bytes"`
 	SHA256       string `json:"sha256"`
-	// Reused is set when an identical document (same SHA-256 and name) was
-	// already archived; nothing new is written.
-	Reused bool `json:"reused,omitempty"`
 }
 
 // Variant is a resized rendition for responsive delivery (srcset).
@@ -65,12 +61,7 @@ func NewService(store domain.Store, maxBytes int64) *Service {
 	return &Service{store: store, maxBytes: maxBytes}
 }
 
-var errBadType = apperr.New("media.bad_type", apperr.KindValidation)
-
 // Upload validates type/size, generates a stable key, and stores the object.
-// The declared type must be media and the bytes must not be a web page; the
-// stored extension follows the validated type, never the client's file name,
-// so an upload can never land on disk as ".html".
 func (s *Service) Upload(ctx context.Context, filename, contentType string, data []byte) (*Uploaded, error) {
 	if len(data) == 0 {
 		return nil, apperr.New("media.empty", apperr.KindValidation)
@@ -78,49 +69,10 @@ func (s *Service) Upload(ctx context.Context, filename, contentType string, data
 	if s.maxBytes > 0 && int64(len(data)) > s.maxBytes {
 		return nil, apperr.New("media.too_large", apperr.KindValidation)
 	}
-	contentType = baseType(contentType)
-	if !allowed(contentType) || activeContent(data) {
-		return nil, errBadType
+	if !allowed(contentType) {
+		return nil, apperr.New("media.bad_type", apperr.KindValidation)
 	}
 	return s.put(ctx, id.New()+ext(filename, contentType), contentType, data)
-}
-
-// UploadAvatar stores a profile picture. Only real images are accepted, judged
-// by their bytes rather than the declared type: JPEG, PNG and GIF are decoded
-// and re-encoded (which also strips metadata), and WebP is kept as-is once its
-// signature is verified. Anything else — including HTML or SVG disguised as an
-// image — is rejected.
-func (s *Service) UploadAvatar(ctx context.Context, data []byte) (*Uploaded, error) {
-	if len(data) == 0 {
-		return nil, apperr.New("media.empty", apperr.KindValidation)
-	}
-	if http.DetectContentType(data) == "image/webp" {
-		return s.put(ctx, id.New()+".webp", "image/webp", data)
-	}
-	img, format, err := image.Decode(bytes.NewReader(data))
-	if err != nil {
-		return nil, errBadType
-	}
-	var buf bytes.Buffer
-	if format == "jpeg" {
-		err = jpeg.Encode(&buf, img, &jpeg.Options{Quality: 88})
-		if err == nil {
-			return s.put(ctx, id.New()+".jpg", "image/jpeg", buf.Bytes())
-		}
-	} else if err = png.Encode(&buf, img); err == nil {
-		return s.put(ctx, id.New()+".png", "image/png", buf.Bytes())
-	}
-	return nil, apperr.ErrInternal
-}
-
-// activeContent reports bytes that a browser would render as a web page
-// whatever they are labelled as (HTML disguised as an image or audio file).
-func activeContent(data []byte) bool {
-	return strings.HasPrefix(http.DetectContentType(data), "text/html")
-}
-
-func baseType(ct string) string {
-	return strings.ToLower(strings.TrimSpace(strings.Split(ct, ";")[0]))
 }
 
 func (s *Service) put(ctx context.Context, key, contentType string, data []byte) (*Uploaded, error) {
@@ -160,8 +112,8 @@ func (s *Service) ImportRemote(ctx context.Context, sourceURL, filename string, 
 	if s.maxBytes > 0 && int64(len(data)) > s.maxBytes {
 		return nil, apperr.New("media.too_large", apperr.KindValidation)
 	}
-	if !allowed(ct) || activeContent(data) {
-		return nil, errBadType
+	if !allowed(ct) {
+		return nil, apperr.New("media.bad_type", apperr.KindValidation)
 	}
 	return s.put(ctx, key, ct, data)
 }
@@ -197,11 +149,6 @@ func (s *Service) ArchiveJSON(ctx context.Context, filename string, data []byte)
 		name = "course-import"
 	}
 	key := "imports/" + digest[:16] + "-" + name + ".json"
-	if lk, ok := s.store.(domain.Lookup); ok {
-		if _, err := lk.Stat(ctx, key); err == nil {
-			return &ArchivedJSON{ID: digest, FileName: filename, StorageKey: key, URL: lk.URL(key), ContentType: "application/json", ContentBytes: len(data), SHA256: digest, Reused: true}, nil
-		}
-	}
 	url, err := s.store.Put(ctx, key, "application/json", data)
 	if err != nil {
 		return nil, apperr.ErrInternal
@@ -338,28 +285,27 @@ func allowed(ct string) bool {
 	return strings.HasPrefix(ct, "image/") || strings.HasPrefix(ct, "audio/") || strings.HasPrefix(ct, "video/")
 }
 
-// typeExts maps an accepted media type to the extension it is stored with.
-var typeExts = map[string]string{
-	"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif",
-	"image/svg+xml": ".svg", "image/avif": ".avif",
-	"audio/mpeg": ".mp3", "audio/mp3": ".mp3", "audio/mp4": ".m4a", "audio/x-m4a": ".m4a", "audio/aac": ".aac",
-	"audio/ogg": ".ogg", "audio/webm": ".webm", "audio/wav": ".wav", "audio/x-wav": ".wav", "audio/wave": ".wav",
-	"video/mp4": ".mp4", "video/webm": ".webm", "video/ogg": ".ogv", "video/quicktime": ".mov",
-}
-
-// ext picks the stored extension from the validated content type. The client's
-// file name is only consulted for a media type without a fixed mapping, and
-// only when its extension is a known media extension of that same family.
 func ext(filename, contentType string) string {
-	ct := baseType(contentType)
-	if e, ok := typeExts[ct]; ok {
+	if e := strings.ToLower(filepath.Ext(filename)); e != "" && len(e) <= 6 {
 		return e
 	}
-	e := strings.ToLower(filepath.Ext(filename))
-	for t, known := range typeExts {
-		if known == e && strings.SplitN(t, "/", 2)[0] == strings.SplitN(ct, "/", 2)[0] {
-			return e
-		}
+	switch {
+	case strings.Contains(contentType, "jpeg"):
+		return ".jpg"
+	case strings.Contains(contentType, "png"):
+		return ".png"
+	case strings.Contains(contentType, "webp"):
+		return ".webp"
+	case strings.Contains(contentType, "gif"):
+		return ".gif"
+	case strings.Contains(contentType, "mpeg"), strings.Contains(contentType, "mp3"):
+		return ".mp3"
+	case strings.Contains(contentType, "mp4"):
+		return ".mp4"
+	case strings.Contains(contentType, "webm"):
+		return ".webm"
+	case strings.Contains(contentType, "ogg"):
+		return ".ogg"
 	}
 	return ".bin"
 }

@@ -9,10 +9,6 @@ import (
 // satisfies it; declaring it here keeps the course module decoupled from auth.
 type Guard interface {
 	Require(next http.Handler) http.Handler
-	// Optional publishes the principal when a valid token is sent and lets
-	// anonymous requests through; an invalid token is still rejected (401) so
-	// the client refreshes it instead of silently browsing as a guest.
-	Optional(next http.Handler) http.Handler
 }
 
 // Premium gates film/podcast (media library) behind an active subscription.
@@ -20,12 +16,11 @@ type Premium interface {
 	RequirePremium(ctx context.Context, userID string) error
 }
 
-// Mount registers the course routes. Browse is public (content of locked
-// lessons is withheld per viewer); progress requires auth.
+// Mount registers the course routes. Browse is public; progress requires auth.
 func (h *Handler) Mount(mux *http.ServeMux, prefix string, guard Guard) {
 	mux.HandleFunc("GET "+prefix+"/courses", h.ListCourses)
-	mux.Handle("GET "+prefix+"/courses/{id}", guard.Optional(http.HandlerFunc(h.GetCourse)))
-	mux.Handle("GET "+prefix+"/lessons/{id}", guard.Optional(http.HandlerFunc(h.GetLesson)))
+	mux.HandleFunc("GET "+prefix+"/courses/{id}", h.GetCourse)
+	mux.HandleFunc("GET "+prefix+"/lessons/{id}", h.GetLesson)
 	mux.Handle("GET "+prefix+"/media-library", guard.Require(http.HandlerFunc(h.MediaLibrary)))
 
 	mux.Handle("POST "+prefix+"/lessons/{id}/complete", guard.Require(http.HandlerFunc(h.CompleteLesson)))

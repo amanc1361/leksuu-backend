@@ -1,9 +1,5 @@
 # Full backend stack: database + cache + migrations + API.
-#   JWT_SECRET=$(openssl rand -hex 32) ADMIN_PASSWORD=... docker compose up --build
-# The API runs with APP_ENV=production, so it refuses a placeholder JWT secret,
-# never bootstraps an admin with the default password, and disables the
-# simulated payment stub (set PAYMENT_PROVIDER=zarinpal + ZARINPAL_MERCHANT_ID
-# to sell subscriptions). The database and cache listen on localhost only.
+#   docker compose up --build
 name: leksuu-backend
 
 services:
@@ -13,7 +9,7 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: leksuu
-    ports: ["127.0.0.1:5432:5432"]
+    ports: ["5432:5432"]
     volumes: ["pgdata:/var/lib/postgresql/data"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d leksuu"]
@@ -23,7 +19,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    ports: ["127.0.0.1:6379:6379"]
+    ports: ["6379:6379"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -54,11 +50,7 @@ services:
       HTTP_PORT: "8080"
       DATABASE_URL: postgres://postgres:postgres@db:5432/leksuu?sslmode=disable
       REDIS_URL: redis://redis:6379/0
-      JWT_SECRET: "${JWT_SECRET:?set JWT_SECRET to a long random secret}"
-      ADMIN_EMAILS: "${ADMIN_EMAILS:-admin@leksuu.app}"
-      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-}"
-      PAYMENT_PROVIDER: "${PAYMENT_PROVIDER:-stub}"
-      ZARINPAL_MERCHANT_ID: "${ZARINPAL_MERCHANT_ID:-}"
+      JWT_SECRET: change-me-in-prod
       # media / object storage (local-disk default; persisted in the media volume).
       # For S3 object storage (ArvanCloud / MinIO), build the image with
       # `-tags pgx,s3` and set S3_ENDPOINT/S3_BUCKET/S3_ACCESS_KEY/S3_SECRET_KEY.

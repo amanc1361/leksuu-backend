@@ -21,12 +21,19 @@ type PostgresSRSRepo struct{ pool *pgxpool.Pool }
 func NewPostgresSRSRepo(pool *pgxpool.Pool) *PostgresSRSRepo { return &PostgresSRSRepo{pool: pool} }
 
 func (r *PostgresSRSRepo) EnsureVocab(ctx context.Context, v *domain.Vocab) error {
-	meaning, _ := json.Marshal(v.Meaning)
+	// Blank translations must never overwrite real ones on upsert (QA N03).
+	clean := make(map[string]string, len(v.Meaning))
+	for k, m := range v.Meaning {
+		if strings.TrimSpace(m) != "" {
+			clean[k] = m
+		}
+	}
+	meaning, _ := json.Marshal(clean)
 	return r.pool.QueryRow(ctx,
 		`INSERT INTO vocabulary_items (language, item_kind, lemma, pronunciation, meaning, example, audio_key)
 		 VALUES ($1,$2,$3,NULLIF($4,''),$5,NULLIF($6,''),NULLIF($7,''))
 		 ON CONFLICT (language, item_kind, lemma)
-		 DO UPDATE SET meaning = EXCLUDED.meaning,
+		 DO UPDATE SET meaning = vocabulary_items.meaning || EXCLUDED.meaning,
 		   example = COALESCE(EXCLUDED.example, vocabulary_items.example),
 		   pronunciation = COALESCE(EXCLUDED.pronunciation, vocabulary_items.pronunciation),
 		   audio_key = COALESCE(EXCLUDED.audio_key, vocabulary_items.audio_key)
@@ -291,7 +298,10 @@ func (r *PostgresSRSRepo) DeleteVocab(ctx context.Context, vid string) error {
 
 func (r *PostgresSRSRepo) LookupVocab(ctx context.Context, language, lemma string) (*domain.Vocab, error) {
 	v, err := scanVocab(r.pool.QueryRow(ctx,
-		`SELECT `+vocabCols+` FROM vocabulary_items WHERE language=$1 AND item_kind='word' AND lower(lemma)=lower($2)`,
+		`SELECT `+vocabCols+` FROM vocabulary_items
+		  WHERE language=$1 AND leksuu_norm_lemma(lemma) = $2
+		  ORDER BY (item_kind = 'word') DESC, (meaning <> '{}'::jsonb) DESC, lemma
+		  LIMIT 1`,
 		language, lemma))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrVocabNotFound

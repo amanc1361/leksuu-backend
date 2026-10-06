@@ -47,10 +47,7 @@ func New(d Deps) *Module {
 		usecase.Config{RefreshTTL: d.RefreshTTL},
 		d.AdminEmails,
 	)
-	authenticator := rest.NewAuthenticator(jwt)
-	authenticator.SetAccountChecker(svc)
-	svc.OnAccountChange(authenticator.Forget)
-	return &Module{handler: rest.NewHandler(svc), authn: authenticator, svc: svc, adminEmails: d.AdminEmails}
+	return &Module{handler: rest.NewHandler(svc), authn: rest.NewAuthenticator(jwt), svc: svc, adminEmails: d.AdminEmails}
 }
 
 // Mount registers the module's routes under the API prefix.

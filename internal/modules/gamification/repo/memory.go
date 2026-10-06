@@ -16,47 +16,10 @@ type MemoryRepo struct {
 	states map[string]domain.State
 	goals  map[string]domain.DailyGoal // key: userID|YYYY-MM-DD
 	recaps map[string]bool             // key: userID|weekKey
-	events map[string]bool             // key: userID|eventKey
 }
 
 func NewMemoryRepo() *MemoryRepo {
-	return &MemoryRepo{states: map[string]domain.State{}, goals: map[string]domain.DailyGoal{}, recaps: map[string]bool{}, events: map[string]bool{}}
-}
-
-// Mutate applies a change under the repo lock (atomic for this process).
-func (r *MemoryRepo) Mutate(_ context.Context, userID string, ch domain.Change) (bool, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	ek := userID + "|" + ch.EventKey
-	if ch.EventKey != "" && r.events[ek] {
-		return false, nil
-	}
-	st, ok := r.states[userID]
-	if !ok {
-		st = domain.State{UserID: userID, League: domain.LeagueBronze}
-	}
-	if err := ch.Apply(&st); err != nil {
-		return false, err
-	}
-	r.states[userID] = st
-	if ch.DailyXP != 0 {
-		target := st.DailyTargetXP
-		if target <= 0 {
-			target = ch.DefaultTarget
-		}
-		k := key(userID, ch.Day)
-		g, ok := r.goals[k]
-		if !ok {
-			g = domain.DailyGoal{Date: ch.Day, TargetXP: target}
-		}
-		g.EarnedXP += ch.DailyXP
-		g.Met = g.EarnedXP >= g.TargetXP
-		r.goals[k] = g
-	}
-	if ch.EventKey != "" {
-		r.events[ek] = true
-	}
-	return true, nil
+	return &MemoryRepo{states: map[string]domain.State{}, goals: map[string]domain.DailyGoal{}, recaps: map[string]bool{}}
 }
 
 func key(userID string, d time.Time) string { return userID + "|" + d.Format("2006-01-02") }

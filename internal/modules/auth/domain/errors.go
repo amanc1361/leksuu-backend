@@ -5,7 +5,6 @@ import "github.com/leksuu/platform/internal/shared/apperr"
 // Auth sentinel errors. Codes are message-catalog keys (shared/message).
 var (
 	ErrEmailRequired      = apperr.New("auth.email_required", apperr.KindValidation)
-	ErrEmailInvalid       = apperr.New("auth.email_invalid", apperr.KindValidation)
 	ErrPasswordRequired   = apperr.New("auth.password_required", apperr.KindValidation)
 	ErrRefreshRequired    = apperr.New("auth.refresh_required", apperr.KindValidation)
 	ErrEmailTaken         = apperr.New("auth.email_taken", apperr.KindConflict)

@@ -18,13 +18,12 @@ import (
 type MemoryCourseRepo struct {
 	mu           sync.RWMutex
 	courses      []domain.Course
-	units        map[string][]domain.Unit             // courseID -> units (chapters)
-	lessons      map[string][]domain.Lesson           // courseID -> lessons
-	items        map[string][]domain.LessonItem       // lessonID -> items
-	exs          map[string][]domain.Exercise         // itemID -> exercises
-	lessonCourse map[string]string                    // lessonID -> courseID
-	accessRules  map[string]domain.AccessRule         // "type|id" -> rule
-	translations map[string]domain.ContentTranslation // "hash|locale" -> translation
+	units        map[string][]domain.Unit       // courseID -> units (chapters)
+	lessons      map[string][]domain.Lesson     // courseID -> lessons
+	items        map[string][]domain.LessonItem // lessonID -> items
+	exs          map[string][]domain.Exercise   // itemID -> exercises
+	lessonCourse map[string]string              // lessonID -> courseID
+	accessRules  map[string]domain.AccessRule   // "type|id" -> rule
 }
 
 func raw(s string) json.RawMessage { return json.RawMessage(s) }
@@ -37,7 +36,6 @@ func NewMemoryCourseRepo() *MemoryCourseRepo {
 		exs:          map[string][]domain.Exercise{},
 		lessonCourse: map[string]string{},
 		accessRules:  map[string]domain.AccessRule{},
-		translations: map[string]domain.ContentTranslation{},
 	}
 	r.seed()
 	return r
@@ -56,6 +54,9 @@ func (r *MemoryCourseRepo) seed() {
 	r.lessons[cid] = []domain.Lesson{
 		{ID: "lesson-greetings", CourseID: cid, UnitID: uid, Position: 1, Title: "Greetings", Version: 1},
 		{ID: "lesson-introductions", CourseID: cid, UnitID: uid, Position: 2, Title: "Introductions", Version: 1},
+		// An empty checkpoint (no items) — exists in the catalog but has no
+		// content yet, so it must not be completable or rewardable (N08).
+		{ID: "lesson-empty-cp", CourseID: cid, UnitID: uid, Position: 3, Title: "Checkpoint", Version: 1},
 	}
 	for _, l := range r.lessons[cid] {
 		r.lessonCourse[l.ID] = cid
@@ -397,38 +398,6 @@ func (r *MemoryCourseRepo) Exercise(_ context.Context, id string) (*domain.Exerc
 	return nil, domain.ErrExerciseNotFound
 }
 
-// ExerciseLessonID returns the lesson an exercise belongs to.
-func (r *MemoryCourseRepo) ExerciseLessonID(_ context.Context, exerciseID string) (string, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	for itemID, list := range r.exs {
-		for _, e := range list {
-			if e.ID != exerciseID {
-				continue
-			}
-			for lessonID, items := range r.items {
-				for _, it := range items {
-					if it.ID == itemID {
-						return lessonID, nil
-					}
-				}
-			}
-		}
-	}
-	return "", domain.ErrExerciseNotFound
-}
-
-// LessonItemCounts returns the number of items of every lesson in a course.
-func (r *MemoryCourseRepo) LessonItemCounts(_ context.Context, courseID string) (map[string]int, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	out := make(map[string]int, len(r.lessons[courseID]))
-	for _, l := range r.lessons[courseID] {
-		out[l.ID] = len(r.items[l.ID])
-	}
-	return out, nil
-}
-
 func (r *MemoryCourseRepo) LessonCount(_ context.Context, courseID string) (int, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -492,19 +461,10 @@ func (r *MemoryCourseRepo) MoveLessonToUnit(_ context.Context, lessonID, unitID 
 		return domain.ErrLessonNotFound
 	}
 	list := r.lessons[cid]
-	var sourceID string
-	for _, x := range list {
-		if x.ID == lessonID {
-			sourceID = x.SourceID
-		}
-	}
 	n := 0
 	for _, x := range list {
 		if x.UnitID == unitID {
 			n++
-			if sourceID != "" && x.SourceID == sourceID && x.ID != lessonID {
-				return domain.ErrLessonSourceConflict // mirrors lessons_unit_source_id_uq
-			}
 		}
 	}
 	for i := range list {
@@ -683,24 +643,6 @@ func (r *MemoryProgressRepo) ExerciseAttempts(_ context.Context, userID, exercis
 	return n, nil
 }
 
-// AttemptedExercises reports which of the given exercises the user has
-// answered at least once.
-func (r *MemoryProgressRepo) AttemptedExercises(_ context.Context, userID string, exerciseIDs []string) (map[string]bool, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	want := make(map[string]bool, len(exerciseIDs))
-	for _, id := range exerciseIDs {
-		want[id] = true
-	}
-	out := map[string]bool{}
-	for _, e := range r.entries {
-		if e.UserID == userID && e.EntityType == domain.EntityExercise && want[e.EntityID] {
-			out[e.EntityID] = true
-		}
-	}
-	return out, nil
-}
-
 func (r *MemoryProgressRepo) CompletedLessons(_ context.Context, userID, courseID string) (int, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -750,22 +692,16 @@ func (r *MemoryCourseRepo) DeleteItem(_ context.Context, itemID string) error {
 	return nil // idempotent
 }
 
-// ReplaceImportedItems mirrors the Postgres sync: imported items are matched
-// by (source_ref, occurrence) and updated in place (IDs kept), new ones are
-// inserted, stale ones removed; hand-authored items stay first.
-func (r *MemoryCourseRepo) ReplaceImportedItems(_ context.Context, lessonID string, items []domain.ImportedItem) (*domain.ImportedItemsResult, error) {
+// ReplaceImportedItems mirrors the Postgres behaviour: drop the lesson's
+// imported items, keep hand-authored ones, append the new set in order.
+func (r *MemoryCourseRepo) ReplaceImportedItems(_ context.Context, lessonID string, items []domain.ImportedItem) ([]domain.LessonItem, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	kept := make([]domain.LessonItem, 0, len(r.items[lessonID]))
-	byKey := map[string]domain.LessonItem{}
-	var order []string
-	seen := map[string]int{}
 	base := 0
 	for _, it := range r.items[lessonID] {
 		if it.SourceRef != "" {
-			key := importKey(it.SourceRef, seen)
-			byKey[key] = it
-			order = append(order, key)
+			delete(r.exs, it.ID)
 			continue
 		}
 		kept = append(kept, it)
@@ -773,134 +709,23 @@ func (r *MemoryCourseRepo) ReplaceImportedItems(_ context.Context, lessonID stri
 			base = it.Position
 		}
 	}
-	res := &domain.ImportedItemsResult{Items: make([]domain.LessonItem, 0, len(items))}
-	matched := map[string]bool{}
-	seen = map[string]int{}
+	out := make([]domain.LessonItem, 0, len(items))
 	for i, in := range items {
 		payload := in.Payload
 		if len(payload) == 0 {
 			payload = raw(`{}`)
 		}
-		it := domain.LessonItem{LessonID: lessonID, Position: base + i + 1, Kind: in.Kind, Payload: payload, SourceRef: in.SourceRef}
-		key := importKey(in.SourceRef, seen)
-		old, ok := byKey[key]
-		if !ok {
-			it.ID = id.New()
-			for _, e := range in.Exercises {
-				e.ID = id.New()
-				e.LessonItemID = it.ID
-				r.exs[it.ID] = append(r.exs[it.ID], e)
-			}
-			res.Created++
-		} else {
-			matched[key] = true
-			it.ID = old.ID
-			changed := old.Kind != in.Kind || old.Position != it.Position || !sameJSON(old.Payload, payload)
-			olds := r.exs[old.ID]
-			next := make([]domain.Exercise, 0, len(in.Exercises))
-			for j, e := range in.Exercises {
-				if j < len(olds) {
-					o := olds[j]
-					if o.Type != e.Type || o.Difficulty != e.Difficulty || !sameJSON(o.Prompt, e.Prompt) || !sameJSON(o.AnswerKey, e.AnswerKey) {
-						changed = true
-					}
-					e.ID = o.ID
-				} else {
-					changed = true
-					e.ID = id.New()
-				}
-				e.LessonItemID = it.ID
-				next = append(next, e)
-			}
-			if len(olds) > len(in.Exercises) {
-				changed = true
-			}
-			r.exs[it.ID] = next
-			if changed {
-				res.Updated++
-			} else {
-				res.Unchanged++
-			}
+		it := domain.LessonItem{ID: id.New(), LessonID: lessonID, Position: base + i + 1, Kind: in.Kind, Payload: payload, SourceRef: in.SourceRef}
+		for _, e := range in.Exercises {
+			e.ID = id.New()
+			e.LessonItemID = it.ID
+			r.exs[it.ID] = append(r.exs[it.ID], e)
 		}
 		kept = append(kept, it)
-		res.Items = append(res.Items, it)
-	}
-	for _, key := range order {
-		if !matched[key] {
-			delete(r.exs, byKey[key].ID)
-			res.Removed++
-		}
+		out = append(out, it)
 	}
 	r.items[lessonID] = kept
-	return res, nil
-}
-
-// SetUnitSourceID records the external chapter a unit was imported from.
-func (r *MemoryCourseRepo) SetUnitSourceID(_ context.Context, unitID, sourceID string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	for cid, list := range r.units {
-		for i := range list {
-			if list[i].ID == unitID {
-				r.units[cid][i].SourceID = sourceID
-				return nil
-			}
-		}
-	}
-	return domain.ErrUnitNotFound
-}
-
-// LessonsBySourceID finds a course's lessons imported from one external lesson.
-func (r *MemoryCourseRepo) LessonsBySourceID(ctx context.Context, courseID, sourceID string) ([]domain.Lesson, error) {
-	all, err := r.Lessons(ctx, courseID)
-	if err != nil {
-		return nil, err
-	}
-	var out []domain.Lesson
-	for _, l := range all {
-		if l.SourceID != "" && l.SourceID == sourceID {
-			out = append(out, l)
-		}
-	}
 	return out, nil
-}
-
-func (r *MemoryCourseRepo) ContentTranslations(_ context.Context, hashes []string) ([]domain.ContentTranslation, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	want := map[string]bool{}
-	for _, h := range hashes {
-		want[h] = true
-	}
-	var out []domain.ContentTranslation
-	for _, t := range r.translations {
-		if want[t.SourceHash] {
-			out = append(out, t)
-		}
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].SourceHash != out[j].SourceHash {
-			return out[i].SourceHash < out[j].SourceHash
-		}
-		return out[i].Locale < out[j].Locale
-	})
-	return out, nil
-}
-
-func (r *MemoryCourseRepo) UpsertContentTranslations(_ context.Context, ts []domain.ContentTranslation) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	for _, t := range ts {
-		r.translations[t.SourceHash+"|"+t.Locale] = t
-	}
-	return nil
-}
-
-func (r *MemoryCourseRepo) DeleteContentTranslation(_ context.Context, sourceHash, locale string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	delete(r.translations, sourceHash+"|"+locale)
-	return nil
 }
 
 func (r *MemoryCourseRepo) ReorderItems(_ context.Context, lessonID string, orderedIDs []string) error {

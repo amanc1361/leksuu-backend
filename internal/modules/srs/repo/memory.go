@@ -97,7 +97,16 @@ func (r *MemorySRSRepo) EnsureVocab(_ context.Context, v *domain.Vocab) error {
 	k := vkey(v.Language, v.Kind, v.Lemma)
 	if existing, ok := r.vocabByKey[k]; ok {
 		if len(v.Meaning) > 0 {
-			existing.Meaning = v.Meaning
+			merged := make(map[string]string, len(existing.Meaning)+len(v.Meaning))
+			for k, m := range existing.Meaning {
+				merged[k] = m
+			}
+			for k, m := range v.Meaning {
+				if strings.TrimSpace(m) != "" {
+					merged[k] = m
+				}
+			}
+			existing.Meaning = merged
 		}
 		if v.Example != "" {
 			existing.Example = v.Example
@@ -401,11 +410,31 @@ func (r *MemorySRSRepo) DeleteVocab(_ context.Context, vid string) error {
 func (r *MemorySRSRepo) LookupVocab(_ context.Context, language, lemma string) (*domain.Vocab, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if v, ok := r.vocabByKey[vkey(language, "word", strings.ToLower(strings.TrimSpace(lemma)))]; ok {
-		cp := *v
-		return &cp, nil
+	key := domain.NormalizeLemma(lemma)
+	var best *domain.Vocab
+	rank := func(v *domain.Vocab) int {
+		n := 0
+		if v.Kind == "word" {
+			n += 2
+		}
+		if len(v.Meaning) > 0 {
+			n++
+		}
+		return n
 	}
-	return nil, domain.ErrVocabNotFound
+	for _, v := range r.vocabByKey {
+		if v.Language != language || domain.NormalizeLemma(v.Lemma) != key {
+			continue
+		}
+		if best == nil || rank(v) > rank(best) {
+			best = v
+		}
+	}
+	if best == nil {
+		return nil, domain.ErrVocabNotFound
+	}
+	cp := *best
+	return &cp, nil
 }
 
 func (r *MemorySRSRepo) GetGoal(_ context.Context, userID string) (int, error) {

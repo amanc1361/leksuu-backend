@@ -5,6 +5,7 @@ package domain
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/leksuu/platform/internal/shared/apperr"
@@ -144,6 +145,12 @@ func Reschedule(in SchedInput, g Grade, now time.Time) SchedResult {
 		} else {
 			iv = roundDays(float64(in.IntervalDays) * ease * 1.3)
 		}
+		// Easy must never schedule sooner than Good from the same state (QA
+		// N04): early on Good jumps to fixed SM-2 steps (1d, 6d) while Easy
+		// scales the current interval, which inverted them (Good 6d, Easy 3d).
+		if good := Reschedule(in, GradeGood, now).IntervalDays; iv <= good {
+			iv = roundDays(float64(good + 1))
+		}
 	default: // GradeGood
 		ease = clampEase(ease + easeDeltaGood)
 		reps++
@@ -233,11 +240,6 @@ type CardSnapshot struct {
 	Lapses       int       `json:"lapses"`
 	Suspended    bool      `json:"suspended"`
 	DueAt        time.Time `json:"due_at"`
-	// Rewarded records whether the review that replaced this state earned XP.
-	Rewarded bool `json:"rewarded,omitempty"`
-	// Undone marks the tombstone left by Undo: there is nothing left to undo,
-	// and a re-review of the restored state does not earn XP a second time.
-	Undone bool `json:"undone,omitempty"`
 }
 
 // DueCard is a review-ready projection: card state joined with its vocab so the
@@ -368,4 +370,16 @@ type CardRow struct {
 	Suspended    bool              `json:"suspended"`
 	Leech        bool              `json:"leech"`
 	DueAt        time.Time         `json:"due_at"`
+}
+
+// NormalizeLemma folds a looked-up or saved word to its dictionary key: trimmed,
+// lowercased, with surrounding sentence punctuation removed and inner spaces
+// collapsed, so "Hello!", " Hi! " and "Meet" find "hello", "hi" and "meet"
+// (QA N09). Inner apostrophes ("I'm", "aren't") are kept. Mirrors the SQL
+// function leksuu_norm_lemma (migration 0052).
+func NormalizeLemma(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	s = strings.TrimLeft(s, "\"“¿¡ \t\r\n")
+	s = strings.TrimRight(s, ".!?,;:؟،\"”… \t\r\n")
+	return strings.Join(strings.Fields(s), " ")
 }

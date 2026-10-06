@@ -5,7 +5,6 @@ package usecase
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -28,10 +27,6 @@ type Wallet interface {
 	Balance(ctx context.Context, userID string) (int, error)
 	Spend(ctx context.Context, userID string, amount int) error
 }
-
-// ErrPaymentsUnavailable is returned when no real payment gateway is
-// configured, so no purchase can be started or verified.
-var ErrPaymentsUnavailable = apperr.New("billing.payments_unavailable", apperr.KindConflict)
 
 type Config struct {
 	Plans          []domain.PlanOption
@@ -70,8 +65,7 @@ type SettingsProvider interface {
 func (s *Service) SetSettings(p SettingsProvider) { s.settings = p }
 
 // AccessResolver returns a lesson's effective access requirement
-// ("free" | "courses" | "classes"), or an error (e.g. not found) for a lesson a
-// learner cannot reach. Optional; nil-safe.
+// ("free" | "courses" | "classes"). Optional; nil-safe.
 type AccessResolver interface {
 	LessonRequirement(ctx context.Context, lessonID string) (string, error)
 }
@@ -79,21 +73,14 @@ type AccessResolver interface {
 // SetAccessResolver wires the per-lesson access requirement source.
 func (s *Service) SetAccessResolver(a AccessResolver) { s.access = a }
 
-// lessonRequirement resolves a lesson's effective requirement (default
-// courses). A lesson that does not exist (or is unpublished) is an error, so no
-// quota or gems are ever spent on it.
-func (s *Service) lessonRequirement(ctx context.Context, lessonID string) (string, error) {
-	if s.access == nil {
-		return domain.ProductCourses, nil
+// lessonRequirement resolves a lesson's effective requirement (default courses).
+func (s *Service) lessonRequirement(ctx context.Context, lessonID string) string {
+	if s.access != nil {
+		if r, err := s.access.LessonRequirement(ctx, lessonID); err == nil && r != "" {
+			return r
+		}
 	}
-	r, err := s.access.LessonRequirement(ctx, lessonID)
-	if err != nil {
-		return "", err
-	}
-	if r == "" {
-		return domain.ProductCourses, nil
-	}
-	return r, nil
+	return domain.ProductCourses
 }
 
 // pricing resolves the current pricing from settings, falling back to the
@@ -152,19 +139,11 @@ func (s *Service) LessonAccess(ctx context.Context, userID, lessonID string) (do
 	if lessonID == "" {
 		return domain.AccessDecision{}, apperr.ErrBadRequest
 	}
-	req, err := s.lessonRequirement(ctx, lessonID)
-	if err != nil {
-		return domain.AccessDecision{}, err
-	}
-	switch req {
+	switch s.lessonRequirement(ctx, lessonID) {
 	case domain.AccessFree:
 		return domain.AccessDecision{Allowed: true, Reason: "free"}, nil
 	case domain.ProductClasses:
-		ok, err := s.HasProduct(ctx, userID, domain.ProductClasses)
-		if err != nil {
-			return domain.AccessDecision{}, err
-		}
-		if ok {
+		if ok, _ := s.HasProduct(ctx, userID, domain.ProductClasses); ok {
 			return domain.AccessDecision{Allowed: true, Reason: "premium", IsPremium: true}, nil
 		}
 		return domain.AccessDecision{Allowed: false, Reason: "classes_required"}, nil
@@ -208,19 +187,11 @@ func (s *Service) UnlockLesson(ctx context.Context, userID, lessonID string) (do
 	if lessonID == "" {
 		return domain.AccessDecision{}, apperr.ErrBadRequest
 	}
-	req, err := s.lessonRequirement(ctx, lessonID)
-	if err != nil {
-		return domain.AccessDecision{}, err
-	}
-	switch req {
+	switch s.lessonRequirement(ctx, lessonID) {
 	case domain.AccessFree:
 		return domain.AccessDecision{Allowed: true, Reason: "free"}, nil
 	case domain.ProductClasses:
-		ok, err := s.HasProduct(ctx, userID, domain.ProductClasses)
-		if err != nil {
-			return domain.AccessDecision{}, err
-		}
-		if ok {
+		if ok, _ := s.HasProduct(ctx, userID, domain.ProductClasses); ok {
 			return domain.AccessDecision{Allowed: true, Reason: "unlocked", IsPremium: true}, nil
 		}
 		return domain.AccessDecision{}, apperr.New("billing.class_subscription_required", apperr.KindForbidden)
@@ -258,31 +229,12 @@ func (s *Service) UnlockLesson(ctx context.Context, userID, lessonID string) (do
 		return domain.AccessDecision{}, err
 	}
 	if err := s.repo.AddUnlock(ctx, userID, lessonID, "gem", today); err != nil {
-		// The unlock was not recorded: give the gems back rather than charge
-		// for nothing (best-effort refund when the wallet supports it).
-		if c, ok := s.wallet.(interface {
-			Credit(ctx context.Context, userID string, amount int) error
-		}); ok {
-			_ = c.Credit(ctx, userID, pr.GemUnlockCost)
-		}
 		return domain.AccessDecision{}, err
 	}
 	return domain.AccessDecision{Allowed: true, Reason: "unlocked", GemBalance: bal - pr.GemUnlockCost}, nil
 }
 
 func (s *Service) ProviderName() string { return s.provider.Name() }
-
-// LessonAllowed reports whether the user may open the lesson right now
-// (subscription, class plan, free lesson, or today's unlock) — read-only. The
-// course module uses it to withhold locked content and to refuse grading or
-// completing it.
-func (s *Service) LessonAllowed(ctx context.Context, userID, lessonID string) (bool, error) {
-	d, err := s.LessonAccess(ctx, userID, lessonID)
-	if err != nil {
-		return false, err
-	}
-	return d.Allowed, nil
-}
 func (s *Service) Plans(ctx context.Context, product string) []domain.PlanOption {
 	return s.plansFor(ctx, product)
 }
@@ -355,9 +307,6 @@ func (s *Service) Subscribe(ctx context.Context, userID, product, period string)
 	}
 	desc := fmt.Sprintf("Leksuu %s %s subscription", product, plan.ID)
 	authority, payURL, err := s.provider.RequestPayment(ctx, plan.AmountToman, desc, s.cfg.CallbackURL)
-	if errors.Is(err, ErrPaymentsUnavailable) {
-		return "", ErrPaymentsUnavailable
-	}
 	if err != nil || authority == "" {
 		return "", apperr.New("billing.payment_failed", apperr.KindInternal)
 	}

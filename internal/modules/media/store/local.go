@@ -31,28 +31,7 @@ func (l *Local) Put(_ context.Context, key, _ string, data []byte) (string, erro
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return "", err
 	}
-	// Write to a temp file and rename it into place: the key only ever holds a
-	// complete object, so an import interrupted mid-copy cannot leave a
-	// truncated file that a later import would mistake for an existing copy.
-	tmp, err := os.CreateTemp(filepath.Dir(target), ".upload-*")
-	if err != nil {
-		return "", err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		os.Remove(tmp.Name())
-		return "", err
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmp.Name())
-		return "", err
-	}
-	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
-		os.Remove(tmp.Name())
-		return "", err
-	}
-	if err := os.Rename(tmp.Name(), target); err != nil {
-		os.Remove(tmp.Name())
+	if err := os.WriteFile(target, data, 0o644); err != nil {
 		return "", err
 	}
 	return l.URL(key), nil

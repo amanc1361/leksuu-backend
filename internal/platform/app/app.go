@@ -34,7 +34,6 @@ import (
 	notification "github.com/leksuu/platform/internal/modules/notification"
 	placement "github.com/leksuu/platform/internal/modules/placement"
 	pronunciation "github.com/leksuu/platform/internal/modules/pronunciation"
-	pronusecase "github.com/leksuu/platform/internal/modules/pronunciation/usecase"
 	"github.com/leksuu/platform/internal/modules/recording"
 	recordingusecase "github.com/leksuu/platform/internal/modules/recording/usecase"
 	reminder "github.com/leksuu/platform/internal/modules/reminder"
@@ -66,12 +65,6 @@ type App struct {
 
 func New(cfg config.Config) (*App, error) {
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	if err := cfg.Validate(); err != nil {
-		return nil, err
-	}
-	if cfg.IsProduction() && len(cfg.JWTSecret) < 32 {
-		log.Warn("config: JWT_SECRET is shorter than 32 characters; use a long random secret")
-	}
 
 	repos, cleanup, err := buildRepos(cfg)
 	if err != nil {
@@ -94,13 +87,7 @@ func New(cfg config.Config) (*App, error) {
 		AdminEmails: cfg.AdminEmails,
 	})
 	// Make the configured admin account(s) usable out of the box (memory + pg).
-	// Production never creates an admin with the published default password:
-	// set ADMIN_PASSWORD to bootstrap one (existing admins keep their role).
-	if cfg.IsProduction() && (cfg.AdminPassword == "" || cfg.AdminPassword == config.DefaultAdminPassword) {
-		log.Warn("auth: ADMIN_PASSWORD is unset or the default; admin bootstrap skipped")
-	} else {
-		authModule.BootstrapAdmins(context.Background(), cfg.AdminPassword)
-	}
+	authModule.BootstrapAdmins(context.Background(), cfg.AdminPassword)
 
 	notifModule := notification.New(notification.Deps{
 		Repo:   repos.notification,
@@ -151,10 +138,8 @@ func New(cfg config.Config) (*App, error) {
 	billingModule := billing.New(billing.Deps{
 		ProviderKind: cfg.PaymentProvider,
 		MerchantID:   cfg.ZarinpalMerchantID,
-		// The stub approves every payment without charging; never in production.
-		AllowStub: !cfg.IsProduction(),
-		Repo:      repos.billing,
-		Wallet:    gamificationModule.Wallet(),
+		Repo:         repos.billing,
+		Wallet:       gamificationModule.Wallet(),
 		Config: billingusecase.Config{
 			Plans: []billingdomain.PlanOption{
 				{ID: "monthly", Title: "billing.monthly", AmountToman: cfg.PriceMonthlyToman, Days: 30},
@@ -170,12 +155,6 @@ func New(cfg config.Config) (*App, error) {
 		Guard: authModule.Authenticator(),
 	})
 	billingModule.Service().SetSettings(billingSettings{settingsModule.Service()})
-	switch billingModule.Service().ProviderName() {
-	case "stub":
-		log.Warn("billing: PAYMENT_PROVIDER is the stub; purchases are simulated (development only)")
-	case "disabled":
-		log.Warn("billing: no payment gateway configured (PAYMENT_PROVIDER / ZARINPAL_MERCHANT_ID); purchases are disabled")
-	}
 	authModule.Service().SetSubscriptionLookup(billingModule.Service())
 
 	pronModule := pronunciation.New(pronunciation.Deps{
@@ -203,13 +182,6 @@ func New(cfg config.Config) (*App, error) {
 		Clock:    time.Now,
 	})
 	billingModule.Service().SetAccessResolver(lessonAccessResolver{courseModule.Service()})
-	// Locked lesson content is withheld, graded and completed only with access.
-	courseModule.Service().SetEntitlements(billingModule.Service())
-	// Speak exercises are graded from the server's own pronunciation scores.
-	courseModule.Service().SetSpeakingScores(speakingScores{pronModule.Service()})
-	if cfg.IsProduction() && cfg.PronProvider == "stub" {
-		log.Warn("pronunciation: PRON_PROVIDER is the stub; speaking scores do not analyse audio")
-	}
 
 	mediaModule := media.New(media.Deps{
 		Store:    mediaStore,
@@ -225,8 +197,6 @@ func New(cfg config.Config) (*App, error) {
 	})
 	// A missed grammar exercise enrolls its rule into spaced repetition.
 	courseModule.Service().SetGrammarReviewer(grammarEnroller{srsModule.Service()})
-	// The daily-mix bonus requires the learner's review queue to be empty.
-	gamificationModule.Service().SetReviewQueue(reviewQueue{srsModule.Service()})
 
 	tutorModule := tutor.New(tutor.Deps{
 		Repo:  repos.tutor,
@@ -479,36 +449,7 @@ func (g grammarEnroller) EnrollGrammar(ctx context.Context, userID, language, pa
 type lessonAccessResolver struct{ s *courseusecase.Service }
 
 func (r lessonAccessResolver) LessonRequirement(ctx context.Context, lessonID string) (string, error) {
-	return r.s.LessonRequirement(ctx, lessonID)
-}
-
-// speakingScores adapts the pronunciation service to the course module's
-// SpeakingScores port: the score the server recorded for the learner's latest
-// attempt at a speak exercise (stored under the exercise id, line 0).
-type speakingScores struct{ s *pronusecase.Service }
-
-func (p speakingScores) LatestScore(ctx context.Context, userID, exerciseID string) (int, bool, error) {
-	scores, err := p.s.Scores(ctx, userID, exerciseID)
-	if err != nil {
-		return 0, false, err
-	}
-	for _, ls := range scores {
-		if ls.Line == 0 && ls.Attempts > 0 {
-			return ls.Last, true, nil
-		}
-	}
-	return 0, false, nil
-}
-
-// reviewQueue adapts the srs service to gamification's ReviewQueue port.
-type reviewQueue struct{ s *srsusecase.Service }
-
-func (q reviewQueue) DueCount(ctx context.Context, userID string) (int, error) {
-	st, err := q.s.Stats(ctx, userID)
-	if err != nil {
-		return 0, err
-	}
-	return st.Due, nil
+	return r.s.EffectiveLessonAccess(ctx, lessonID)
 }
 
 // groupSessionsAdapter exposes a tutor's group classes to the earnings report.

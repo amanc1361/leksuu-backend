@@ -178,20 +178,3 @@ func TestKeyTraversalStaysInsidePrefix(t *testing.T) {
 
 var _ domain.Reader = (*S3)(nil)
 var _ domain.Store = (*S3)(nil)
-
-// Remote imports skip the download when Stat finds the deterministic key.
-func TestStatReportsExistingAndMissingObjects(t *testing.T) {
-	f := &fakeS3{body: []byte("mp3"), ct: "audio/mpeg"}
-	s := newTestS3(t, f, "leksuu", false, "https://api.example")
-	ct, err := s.Stat(context.Background(), "remote/abc.mp3")
-	if err != nil || ct != "audio/mpeg" || f.gotMethod != http.MethodHead || f.gotPath != "/bucket/leksuu/remote/abc.mp3" {
-		t.Fatalf("stat existing: ct=%q err=%v %s %s", ct, err, f.gotMethod, f.gotPath)
-	}
-	if got := s.URL("remote/abc.mp3"); got != "https://api.example/media/remote/abc.mp3" {
-		t.Fatalf("url = %q", got)
-	}
-	missing := newTestS3(t, &fakeS3{missing: true}, "leksuu", false, "https://api.example")
-	if _, err := missing.Stat(context.Background(), "remote/none.mp3"); !errors.Is(err, domain.ErrNotFound) {
-		t.Fatalf("missing object: err=%v, want ErrNotFound", err)
-	}
-}

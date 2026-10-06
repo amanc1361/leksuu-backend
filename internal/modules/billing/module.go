@@ -13,13 +13,10 @@ import (
 type Deps struct {
 	ProviderKind string // "stub" | "zarinpal"
 	MerchantID   string
-	// AllowStub permits the simulated stub gateway (development only). When
-	// false, a "stub" (or an unconfigured gateway) disables purchases instead.
-	AllowStub bool
-	Repo      domain.Repository
-	Wallet    usecase.Wallet
-	Config    usecase.Config
-	Guard     rest.Guard
+	Repo         domain.Repository
+	Wallet       usecase.Wallet
+	Config       usecase.Config
+	Guard        rest.Guard
 }
 
 type Module struct {
@@ -30,13 +27,11 @@ type Module struct {
 
 func New(d Deps) *Module {
 	var p usecase.PaymentProvider
-	switch {
-	case d.ProviderKind == "zarinpal" && d.MerchantID != "":
+	switch d.ProviderKind {
+	case "zarinpal":
 		p = newZarinpal(d.MerchantID)
-	case d.ProviderKind != "zarinpal" && d.AllowStub:
-		p = stubPaymentProvider{}
 	default:
-		p = disabledPaymentProvider{}
+		p = stubPaymentProvider{}
 	}
 	svc := usecase.NewService(d.Repo, p, d.Wallet, d.Config)
 	return &Module{handler: rest.NewHandler(svc), guard: d.Guard, svc: svc}
