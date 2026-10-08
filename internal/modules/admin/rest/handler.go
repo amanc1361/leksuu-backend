@@ -105,7 +105,7 @@ func (h *Handler) ListUnitLessons(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]map[string]any, 0, len(lessons))
 	for _, l := range lessons {
-		entry := map[string]any{"id": l.ID, "position": l.Position, "title": l.Title, "unit_id": l.UnitID, "source_id": l.SourceID, "focus": l.Focus}
+		entry := map[string]any{"id": l.ID, "position": l.Position, "title": l.Title, "unit_id": l.UnitID, "source_id": l.SourceID, "focus": l.Focus, "kind": lessonKind(l.Kind)}
 		if len(l.Objective) > 0 {
 			entry["objective"] = json.RawMessage(l.Objective)
 		}
@@ -219,7 +219,7 @@ func lessonAdminView(l coursedomain.Lesson) map[string]any {
 	}
 	return map[string]any{
 		"id": l.ID, "title": l.Title, "position": l.Position, "unit_id": l.UnitID,
-		"source_id": l.SourceID, "cover_url": l.CoverURL, "focus": l.Focus, "objective": obj,
+		"source_id": l.SourceID, "cover_url": l.CoverURL, "focus": l.Focus, "kind": lessonKind(l.Kind), "objective": obj,
 	}
 }
 
@@ -229,12 +229,13 @@ func (h *Handler) UpdateLesson(w http.ResponseWriter, r *http.Request) {
 		Focus     string          `json:"focus"`
 		CoverURL  string          `json:"cover_url"`
 		Objective json.RawMessage `json:"objective"`
+		Kind      string          `json:"kind"`
 	}
 	if json.NewDecoder(r.Body).Decode(&in) != nil {
 		web.Error(w, r, apperr.ErrBadRequest)
 		return
 	}
-	l, err := h.svc.UpdateLesson(r.Context(), r.PathValue("id"), in.Title, in.Focus, in.CoverURL, in.Objective)
+	l, err := h.svc.UpdateLesson(r.Context(), r.PathValue("id"), in.Title, in.Focus, in.CoverURL, in.Objective, in.Kind)
 	if err != nil {
 		web.Error(w, r, err)
 		return
@@ -562,3 +563,6 @@ func (h *Handler) UpdateMedia(w http.ResponseWriter, r *http.Request) {
 	}
 	web.JSON(w, http.StatusOK, map[string]any{"id": it.ID})
 }
+
+// lessonKind exposes a lesson's kind ("lesson" or "checkpoint").
+func lessonKind(k string) string { return coursedomain.KindOrDefault(k) }

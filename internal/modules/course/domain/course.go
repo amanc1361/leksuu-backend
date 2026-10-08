@@ -58,7 +58,22 @@ type Lesson struct {
 	CoverURL  string          // optional lesson cover image (data-URI or URL)
 	Focus     string          // vocabulary | grammar | pronunciation | phrases | conversation
 	Objective json.RawMessage // {"summary":{fa,ckb},"points":[{fa,ckb}]} — Busuu-style intro
+	Kind      string          // lesson | checkpoint (end-of-chapter test)
 }
+
+// KindOrDefault reports a lesson kind, treating an unset value as a lesson.
+func KindOrDefault(k string) string {
+	if k == LessonKindCheckpoint {
+		return k
+	}
+	return LessonKindLesson
+}
+
+// Lesson kinds.
+const (
+	LessonKindLesson     = "lesson"
+	LessonKindCheckpoint = "checkpoint"
+)
 
 // LessonItem is an ordered piece of a lesson (order = Position). Payload carries
 // type-specific content; RefID points at a typed content row when relevant.

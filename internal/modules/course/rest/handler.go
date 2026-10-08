@@ -43,7 +43,7 @@ func lessonView(l domain.Lesson) map[string]any {
 	}
 	return map[string]any{
 		"id": l.ID, "position": l.Position, "title": l.Title,
-		"cover_url": l.CoverURL, "focus": l.Focus, "objective": obj,
+		"cover_url": l.CoverURL, "focus": l.Focus, "kind": lessonKind(l.Kind), "objective": obj,
 	}
 }
 
@@ -296,3 +296,6 @@ func (h *Handler) QuickPractice(w http.ResponseWriter, r *http.Request) {
 	}
 	web.JSON(w, http.StatusOK, map[string]any{"exercises": out})
 }
+
+// lessonKind exposes a lesson's kind ("lesson" or "checkpoint").
+func lessonKind(k string) string { return domain.KindOrDefault(k) }

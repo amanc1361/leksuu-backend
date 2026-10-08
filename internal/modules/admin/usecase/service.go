@@ -168,7 +168,10 @@ func (s *Service) AddLessonToUnit(ctx context.Context, unitID, title, sourceID s
 	return l, false, nil
 }
 
-func (s *Service) UpdateLesson(ctx context.Context, id, title, focus, coverURL string, objective json.RawMessage) (*coursedomain.Lesson, error) {
+func (s *Service) UpdateLesson(ctx context.Context, id, title, focus, coverURL string, objective json.RawMessage, kind string) (*coursedomain.Lesson, error) {
+	if kind != "" && kind != coursedomain.LessonKindLesson && kind != coursedomain.LessonKindCheckpoint {
+		return nil, apperr.ErrBadRequest
+	}
 	l, err := s.repo.Lesson(ctx, id)
 	if err != nil {
 		return nil, err
@@ -180,6 +183,9 @@ func (s *Service) UpdateLesson(ctx context.Context, id, title, focus, coverURL s
 	l.CoverURL = coverURL
 	if len(objective) > 0 {
 		l.Objective = objective
+	}
+	if kind != "" {
+		l.Kind = kind
 	}
 	if err := s.repo.UpdateLesson(ctx, l); err != nil {
 		return nil, err

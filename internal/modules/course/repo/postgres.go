@@ -60,7 +60,7 @@ func (r *PostgresCourseRepo) Course(ctx context.Context, id string) (*domain.Cou
 
 func (r *PostgresCourseRepo) Lessons(ctx context.Context, courseID string) ([]domain.Lesson, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT l.id, l.course_id, COALESCE(l.unit_id::text,''), l.position, l.title, l.version, COALESCE(l.cover_url,''), COALESCE(l.focus,''), COALESCE(l.objective,'{}'), COALESCE(l.source_id,'')
+		`SELECT l.id, l.course_id, COALESCE(l.unit_id::text,''), l.position, l.title, l.version, COALESCE(l.cover_url,''), COALESCE(l.focus,''), COALESCE(l.objective,'{}'), COALESCE(l.source_id,''), COALESCE(l.kind,'lesson')
 		   FROM lessons l LEFT JOIN units u ON u.id = l.unit_id
 		   WHERE l.course_id=$1 ORDER BY COALESCE(u.position, 0), l.position`, courseID)
 	if err != nil {
@@ -70,7 +70,7 @@ func (r *PostgresCourseRepo) Lessons(ctx context.Context, courseID string) ([]do
 	var out []domain.Lesson
 	for rows.Next() {
 		var l domain.Lesson
-		if err := rows.Scan(&l.ID, &l.CourseID, &l.UnitID, &l.Position, &l.Title, &l.Version, &l.CoverURL, &l.Focus, &l.Objective, &l.SourceID); err != nil {
+		if err := rows.Scan(&l.ID, &l.CourseID, &l.UnitID, &l.Position, &l.Title, &l.Version, &l.CoverURL, &l.Focus, &l.Objective, &l.SourceID, &l.Kind); err != nil {
 			return nil, err
 		}
 		out = append(out, l)
@@ -81,8 +81,8 @@ func (r *PostgresCourseRepo) Lessons(ctx context.Context, courseID string) ([]do
 func (r *PostgresCourseRepo) Lesson(ctx context.Context, id string) (*domain.Lesson, error) {
 	var l domain.Lesson
 	err := r.pool.QueryRow(ctx,
-		`SELECT id, course_id, COALESCE(unit_id::text,''), position, title, version, COALESCE(cover_url,''), COALESCE(focus,''), COALESCE(objective,'{}'), COALESCE(source_id,'') FROM lessons WHERE id=$1`, id).
-		Scan(&l.ID, &l.CourseID, &l.UnitID, &l.Position, &l.Title, &l.Version, &l.CoverURL, &l.Focus, &l.Objective, &l.SourceID)
+		`SELECT id, course_id, COALESCE(unit_id::text,''), position, title, version, COALESCE(cover_url,''), COALESCE(focus,''), COALESCE(objective,'{}'), COALESCE(source_id,''), COALESCE(kind,'lesson') FROM lessons WHERE id=$1`, id).
+		Scan(&l.ID, &l.CourseID, &l.UnitID, &l.Position, &l.Title, &l.Version, &l.CoverURL, &l.Focus, &l.Objective, &l.SourceID, &l.Kind)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrLessonNotFound
 	}
@@ -247,9 +247,10 @@ func (r *PostgresCourseRepo) UpdateLesson(ctx context.Context, l *domain.Lesson)
 		   title = COALESCE(NULLIF($2,''), title),
 		   cover_url = NULLIF($3,''),
 		   focus = NULLIF($4,''),
-		   objective = COALESCE($5,'{}')::jsonb
+		   objective = COALESCE($5,'{}')::jsonb,
+		   kind = COALESCE(NULLIF($6,''), kind)
 		 WHERE id=$1 RETURNING id`,
-		l.ID, l.Title, l.CoverURL, l.Focus, []byte(l.Objective)).Scan(&id)
+		l.ID, l.Title, l.CoverURL, l.Focus, []byte(l.Objective), l.Kind).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.ErrLessonNotFound
 	}
@@ -469,7 +470,7 @@ func (r *PostgresCourseRepo) CreateUnit(ctx context.Context, u *domain.Unit) err
 
 func (r *PostgresCourseRepo) LessonsByUnit(ctx context.Context, unitID string) ([]domain.Lesson, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT id, course_id, COALESCE(unit_id::text,''), position, title, version, COALESCE(cover_url,''), COALESCE(focus,''), COALESCE(objective,'{}'), COALESCE(source_id,'')
+		`SELECT id, course_id, COALESCE(unit_id::text,''), position, title, version, COALESCE(cover_url,''), COALESCE(focus,''), COALESCE(objective,'{}'), COALESCE(source_id,''), COALESCE(kind,'lesson')
 		   FROM lessons WHERE unit_id=$1 ORDER BY position`, unitID)
 	if err != nil {
 		return nil, err
@@ -478,7 +479,7 @@ func (r *PostgresCourseRepo) LessonsByUnit(ctx context.Context, unitID string) (
 	var out []domain.Lesson
 	for rows.Next() {
 		var l domain.Lesson
-		if err := rows.Scan(&l.ID, &l.CourseID, &l.UnitID, &l.Position, &l.Title, &l.Version, &l.CoverURL, &l.Focus, &l.Objective, &l.SourceID); err != nil {
+		if err := rows.Scan(&l.ID, &l.CourseID, &l.UnitID, &l.Position, &l.Title, &l.Version, &l.CoverURL, &l.Focus, &l.Objective, &l.SourceID, &l.Kind); err != nil {
 			return nil, err
 		}
 		out = append(out, l)

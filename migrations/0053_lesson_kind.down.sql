@@ -1,0 +1,2 @@
+ALTER TABLE lessons DROP CONSTRAINT IF EXISTS lessons_kind_check;
+ALTER TABLE lessons DROP COLUMN IF EXISTS kind;
