@@ -4,8 +4,10 @@ package usecase
 
 import (
 	"context"
-	"github.com/leksuu/platform/internal/shared/apperr"
+	"errors"
 	"time"
+
+	"github.com/leksuu/platform/internal/shared/apperr"
 
 	"github.com/leksuu/platform/internal/modules/gamification/domain"
 	"strconv"
@@ -50,11 +52,21 @@ func leagueFor(xp int) string {
 }
 
 type Service struct {
-	repo  domain.Repository
-	clock func() time.Time
-	names NameResolver // optional display-name resolver (auth)
-	notif Notifier     // optional; powers the weekly recap
+	repo    domain.Repository
+	clock   func() time.Time
+	names   NameResolver // optional display-name resolver (auth)
+	notif   Notifier     // optional; powers the weekly recap
+	reviews ReviewQueue  // optional; the daily mix's review step (srs)
 }
+
+// ReviewQueue reports how many spaced-repetition cards a learner has due now.
+// The srs module implements it; the daily-mix bonus requires an empty queue.
+type ReviewQueue interface {
+	DueCount(ctx context.Context, userID string) (int, error)
+}
+
+// SetReviewQueue wires the late-bound review-queue port.
+func (s *Service) SetReviewQueue(q ReviewQueue) { s.reviews = q }
 
 func NewService(repo domain.Repository, clock func() time.Time) *Service {
 	return &Service{repo: repo, clock: clock}
@@ -104,15 +116,9 @@ func (s *Service) GetState(ctx context.Context, userID string) (*StateView, erro
 	return &StateView{State: *st, Today: *dg}, nil
 }
 
-// Award adds XP, advances the streak, recomputes the league, and updates today's
-// goal. This is the single entry point other modules call (via a port) when a
-// learner does something worth rewarding.
-func (s *Service) Award(ctx context.Context, userID string, xp int, _ string) error {
-	st, err := s.repo.Get(ctx, userID)
-	if err != nil {
-		return err
-	}
-	today := s.today()
+// applyAward adds XP (and the same amount of gems), advances the streak and
+// recomputes the league on a locked state.
+func applyAward(st *domain.State, xp int, today time.Time) {
 	st.Streak = nextStreak(st.Streak, st.LastActive, today)
 	if st.Streak > st.LongestStreak {
 		st.LongestStreak = st.Streak
@@ -121,11 +127,31 @@ func (s *Service) Award(ctx context.Context, userID string, xp int, _ string) er
 	st.Gems += xp // gems are the spendable currency (earned 1:1 with XP)
 	st.League = leagueFor(st.XP)
 	st.LastActive = &today
-	if err := s.repo.Upsert(ctx, st); err != nil {
-		return err
-	}
-	_, err = s.repo.AddDailyXP(ctx, userID, today, targetFor(st), xp)
+}
+
+// Award adds XP, advances the streak, recomputes the league, and updates today's
+// goal — atomically, so the total XP, the daily goal and the weekly league
+// (which sums daily goals) always agree. This is the single entry point other
+// modules call (via a port) when a learner does something worth rewarding.
+func (s *Service) Award(ctx context.Context, userID string, xp int, _ string) error {
+	today := s.today()
+	_, err := s.repo.Mutate(ctx, userID, domain.Change{
+		Apply:   func(st *domain.State) error { applyAward(st, xp, today); return nil },
+		DailyXP: xp, Day: today, DefaultTarget: DefaultDailyTarget,
+	})
 	return err
+}
+
+// AwardOnce is Award for a one-time event: the reward is granted at most once
+// per user and eventKey (e.g. "lesson:<id>"), even under retries or concurrent
+// requests. Reports whether XP was granted by this call.
+func (s *Service) AwardOnce(ctx context.Context, userID, eventKey string, xp int, _ string) (bool, error) {
+	today := s.today()
+	return s.repo.Mutate(ctx, userID, domain.Change{
+		Apply:   func(st *domain.State) error { applyAward(st, xp, today); return nil },
+		DailyXP: xp, Day: today, DefaultTarget: DefaultDailyTarget,
+		EventKey: eventKey, EventXP: xp,
+	})
 }
 
 // SetDailyTarget stores the user's custom daily XP goal and returns the fresh view.
@@ -136,12 +162,10 @@ func (s *Service) SetDailyTarget(ctx context.Context, userID string, target int)
 	if target > MaxDailyTarget {
 		target = MaxDailyTarget
 	}
-	st, err := s.repo.Get(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
-	st.DailyTargetXP = target
-	if err := s.repo.Upsert(ctx, st); err != nil {
+	if _, err := s.repo.Mutate(ctx, userID, domain.Change{Apply: func(st *domain.State) error {
+		st.DailyTargetXP = target
+		return nil
+	}}); err != nil {
 		return nil, err
 	}
 	return s.GetState(ctx, userID)
@@ -185,20 +209,23 @@ func (s *Service) Balance(ctx context.Context, userID string) (int, error) {
 	return st.Gems, nil
 }
 
-// Spend deducts gems (e.g. to unlock an extra lesson). Errors if insufficient.
+// errInsufficientGems is returned when a spend exceeds the balance.
+var errInsufficientGems = apperr.New("billing.insufficient_gems", apperr.KindForbidden)
+
+// Spend deducts gems (e.g. to unlock an extra lesson). Errors if insufficient;
+// the check and the deduction are one atomic step.
 func (s *Service) Spend(ctx context.Context, userID string, amount int) error {
 	if amount <= 0 {
 		return nil
 	}
-	st, err := s.repo.Get(ctx, userID)
-	if err != nil {
-		return err
-	}
-	if st.Gems < amount {
-		return apperr.New("billing.insufficient_gems", apperr.KindForbidden)
-	}
-	st.Gems -= amount
-	return s.repo.Upsert(ctx, st)
+	_, err := s.repo.Mutate(ctx, userID, domain.Change{Apply: func(st *domain.State) error {
+		if st.Gems < amount {
+			return errInsufficientGems
+		}
+		st.Gems -= amount
+		return nil
+	}})
+	return err
 }
 
 // Credit adds gems back (e.g. refunding a cancelled booking).
@@ -206,12 +233,11 @@ func (s *Service) Credit(ctx context.Context, userID string, amount int) error {
 	if amount <= 0 {
 		return nil
 	}
-	st, err := s.repo.Get(ctx, userID)
-	if err != nil {
-		return err
-	}
-	st.Gems += amount
-	return s.repo.Upsert(ctx, st)
+	_, err := s.repo.Mutate(ctx, userID, domain.Change{Apply: func(st *domain.State) error {
+		st.Gems += amount
+		return nil
+	}})
+	return err
 }
 
 // --- Daily reward (claimable Duolingo-style chest) ---
@@ -254,24 +280,28 @@ func (s *Service) DailyRewardStatus(ctx context.Context, userID string) (*Reward
 	}, nil
 }
 
+var errRewardClaimed = apperr.New("game.reward_already_claimed", apperr.KindConflict)
+
 // ClaimDailyReward grants the daily gem bonus once per UTC day. Idempotent:
-// claiming twice the same day returns a conflict instead of double-awarding.
+// claiming twice the same day returns a conflict instead of double-awarding
+// (the check and the grant are one atomic step).
 func (s *Service) ClaimDailyReward(ctx context.Context, userID string) (*RewardView, error) {
-	st, err := s.repo.Get(ctx, userID)
+	today := s.today()
+	var view RewardView
+	_, err := s.repo.Mutate(ctx, userID, domain.Change{Apply: func(st *domain.State) error {
+		if s.claimedToday(st, today) {
+			return errRewardClaimed
+		}
+		amount := dailyRewardAmount(st.Streak)
+		st.Gems += amount
+		st.LastReward = &today
+		view = RewardView{Available: false, Amount: amount, Gems: st.Gems, Streak: st.Streak}
+		return nil
+	}})
 	if err != nil {
 		return nil, err
 	}
-	today := s.today()
-	if s.claimedToday(st, today) {
-		return nil, apperr.New("game.reward_already_claimed", apperr.KindConflict)
-	}
-	amount := dailyRewardAmount(st.Streak)
-	st.Gems += amount
-	st.LastReward = &today
-	if err := s.repo.Upsert(ctx, st); err != nil {
-		return nil, err
-	}
-	return &RewardView{Available: false, Amount: amount, Gems: st.Gems, Streak: st.Streak}, nil
+	return &view, nil
 }
 
 // dailyMixBonusXP is the once-per-day bonus for finishing the guided daily mix
@@ -299,31 +329,63 @@ func (s *Service) DailyMixStatus(ctx context.Context, userID string) (*MixView, 
 	return &MixView{Completed: s.mixDoneToday(st, s.today()), BonusXP: dailyMixBonusXP, XP: st.XP}, nil
 }
 
+var errMixIncomplete = apperr.New("game.daily_mix_incomplete", apperr.KindConflict)
+
 // CompleteDailyMix awards the daily-mix bonus once per UTC day. Idempotent:
 // a second completion the same day returns the current state without XP.
+//
+// What the server can observe is required before the bonus: the learner's
+// review queue is empty (the mix's review step) and they earned XP today from
+// real activity (reviews, shadowing reps, lessons…). The shadowing and media
+// steps themselves are self-reported by the client.
 func (s *Service) CompleteDailyMix(ctx context.Context, userID string) (*MixView, error) {
+	today := s.today()
 	st, err := s.repo.Get(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
-	today := s.today()
 	if s.mixDoneToday(st, today) {
 		return &MixView{Completed: true, BonusXP: dailyMixBonusXP, XP: st.XP}, nil
 	}
-	// Award first (it advances streak/league/daily-goal), then stamp the day.
-	if err := s.Award(ctx, userID, dailyMixBonusXP, "daily_mix"); err != nil {
+	if s.reviews != nil {
+		due, err := s.reviews.DueCount(ctx, userID)
+		if err != nil {
+			return nil, err
+		}
+		if due > 0 {
+			return nil, errMixIncomplete
+		}
+	}
+	goal, err := s.repo.DailyGoal(ctx, userID, today, targetFor(st))
+	if err != nil {
+		return nil, err
+	}
+	if goal.EarnedXP <= 0 {
+		return nil, errMixIncomplete
+	}
+	if _, err := s.repo.Mutate(ctx, userID, domain.Change{
+		Apply: func(st *domain.State) error {
+			if s.mixDoneToday(st, today) {
+				return errMixDone // claimed concurrently: no second bonus
+			}
+			applyAward(st, dailyMixBonusXP, today)
+			st.LastMix = &today
+			return nil
+		},
+		DailyXP: dailyMixBonusXP, Day: today, DefaultTarget: DefaultDailyTarget,
+		EventKey: "daily_mix:" + today.Format("2006-01-02"), EventXP: dailyMixBonusXP,
+	}); err != nil && !errors.Is(err, errMixDone) {
 		return nil, err
 	}
 	st, err = s.repo.Get(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
-	st.LastMix = &today
-	if err := s.repo.Upsert(ctx, st); err != nil {
-		return nil, err
-	}
 	return &MixView{Completed: true, BonusXP: dailyMixBonusXP, XP: st.XP}, nil
 }
+
+// errMixDone aborts a daily-mix award that another request already granted.
+var errMixDone = errors.New("daily mix already completed")
 
 // NameResolver maps user ids to display names (late-bound to the auth module).
 type NameResolver func(ctx context.Context, ids []string) (map[string]string, error)

@@ -216,3 +216,40 @@ func (r *fakeRepo) SubscriptionsForUser(_ context.Context, _ string) ([]domain.S
 func (r *fakeRepo) ActiveSubscriberIDs(_ context.Context, _ time.Time) ([]string, error) {
 	return nil, nil
 }
+
+type noAccess struct{}
+
+func (noAccess) LessonRequirement(context.Context, string) (string, error) {
+	return "", apperr.New("lesson.not_found", apperr.KindNotFound)
+}
+
+// A lesson that does not exist (or is unpublished) never consumes a free
+// unlock or gems.
+func TestUnlockMissingLessonSpendsNothing(t *testing.T) {
+	r := newFake()
+	s := newSvc(r)
+	s.SetAccessResolver(noAccess{})
+	if _, err := s.UnlockLesson(context.Background(), "u1", "no-such-lesson"); err == nil {
+		t.Fatal("unlocking a missing lesson must fail")
+	}
+	if n, _ := r.FreeUnlocksToday(context.Background(), "u1", s.day()); n != 0 {
+		t.Fatalf("free unlocks used = %d, want 0", n)
+	}
+}
+
+type unavailableProvider struct{ okProvider }
+
+func (unavailableProvider) RequestPayment(context.Context, int, string, string) (string, string, error) {
+	return "", "", ErrPaymentsUnavailable
+}
+
+func TestSubscribeWithoutGatewayIsUnavailable(t *testing.T) {
+	r := newFake()
+	s := NewService(r, unavailableProvider{}, &fakeWallet{}, Config{Plans: []domain.PlanOption{{ID: "monthly", AmountToman: 1, Days: 30}}})
+	if _, err := s.Subscribe(context.Background(), "u1", "courses", "monthly"); err != ErrPaymentsUnavailable {
+		t.Fatalf("want ErrPaymentsUnavailable, got %v", err)
+	}
+	if len(r.pays) != 0 {
+		t.Fatal("no payment may be created")
+	}
+}

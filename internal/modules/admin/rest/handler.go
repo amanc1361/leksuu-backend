@@ -22,6 +22,7 @@ func courseView(c coursedomain.Course) map[string]any {
 	return map[string]any{
 		"id": c.ID, "language": c.Language, "cefr": c.CEFR, "title": c.Title,
 		"description": c.Description, "image_url": c.ImageURL, "version": c.Version, "published": c.Published,
+		"source_id": c.SourceID,
 	}
 }
 
@@ -49,7 +50,7 @@ func (h *Handler) ListCourses(w http.ResponseWriter, r *http.Request) {
 }
 
 func unitView(u coursedomain.Unit) map[string]any {
-	return map[string]any{"id": u.ID, "course_id": u.CourseID, "position": u.Position, "title": u.Title, "description": u.Description}
+	return map[string]any{"id": u.ID, "course_id": u.CourseID, "position": u.Position, "title": u.Title, "description": u.Description, "source_id": u.SourceID}
 }
 
 func (h *Handler) ListUnits(w http.ResponseWriter, r *http.Request) {
@@ -69,17 +70,24 @@ func (h *Handler) CreateUnit(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Title       string `json:"title"`
 		Description string `json:"description"`
+		SourceID    string `json:"source_id"`
 	}
 	if json.NewDecoder(r.Body).Decode(&in) != nil {
 		web.Error(w, r, apperr.ErrBadRequest)
 		return
 	}
-	u, err := h.svc.CreateUnit(r.Context(), r.PathValue("id"), in.Title, in.Description)
+	u, reused, err := h.svc.CreateUnit(r.Context(), r.PathValue("id"), in.Title, in.Description, in.SourceID)
 	if err != nil {
 		web.Error(w, r, err)
 		return
 	}
-	web.JSON(w, http.StatusCreated, unitView(*u))
+	out := unitView(*u)
+	out["reused"] = reused
+	status := http.StatusCreated
+	if reused {
+		status = http.StatusOK
+	}
+	web.JSON(w, status, out)
 }
 
 func (h *Handler) ReorderUnits(w http.ResponseWriter, r *http.Request) {
@@ -124,12 +132,21 @@ func (h *Handler) CreateUnitLesson(w http.ResponseWriter, r *http.Request) {
 		web.Error(w, r, apperr.ErrBadRequest)
 		return
 	}
-	l, reused, err := h.svc.AddLessonToUnit(r.Context(), r.PathValue("id"), in.Title, in.SourceID, in.Position)
+	l, placed, err := h.svc.AddLessonToUnit(r.Context(), r.PathValue("id"), in.Title, in.SourceID, in.Position)
 	if err != nil {
 		web.Error(w, r, err)
 		return
 	}
-	web.JSON(w, http.StatusCreated, map[string]any{"id": l.ID, "position": l.Position, "title": l.Title, "unit_id": l.UnitID, "source_id": l.SourceID, "reused": reused})
+	status := http.StatusCreated
+	if placed.Reused {
+		status = http.StatusOK
+	}
+	dups := placed.Duplicates
+	if dups == nil {
+		dups = []string{}
+	}
+	web.JSON(w, status, map[string]any{"id": l.ID, "position": l.Position, "title": l.Title, "unit_id": l.UnitID, "source_id": l.SourceID,
+		"reused": placed.Reused, "moved": placed.Moved, "duplicate_ids": dups})
 }
 
 func (h *Handler) ReorderLessons(w http.ResponseWriter, r *http.Request) {
@@ -154,17 +171,24 @@ func (h *Handler) CreateCourse(w http.ResponseWriter, r *http.Request) {
 		Title       string
 		Description string
 		ImageURL    string `json:"image_url"`
+		SourceID    string `json:"source_id"`
 	}
 	if json.NewDecoder(r.Body).Decode(&in) != nil {
 		web.Error(w, r, apperr.ErrBadRequest)
 		return
 	}
-	c, err := h.svc.CreateCourse(r.Context(), usecase.CreateCourseInput(in))
+	c, reused, err := h.svc.CreateCourse(r.Context(), usecase.CreateCourseInput(in))
 	if err != nil {
 		web.Error(w, r, err)
 		return
 	}
-	web.JSON(w, http.StatusCreated, courseView(*c))
+	out := courseView(*c)
+	out["reused"] = reused
+	status := http.StatusCreated
+	if reused {
+		status = http.StatusOK
+	}
+	web.JSON(w, status, out)
 }
 
 func (h *Handler) Publish(w http.ResponseWriter, r *http.Request) {
@@ -312,7 +336,7 @@ func (h *Handler) ReplaceImportedItems(w http.ResponseWriter, r *http.Request) {
 			items[i].Exercises = append(items[i].Exercises, coursedomain.Exercise{Type: e.Type, Prompt: e.Prompt, AnswerKey: e.AnswerKey, Difficulty: d})
 		}
 	}
-	saved, err := h.svc.ReplaceImportedItems(r.Context(), r.PathValue("id"), items)
+	res, err := h.svc.ReplaceImportedItems(r.Context(), r.PathValue("id"), items)
 	if err != nil {
 		web.Error(w, r, err)
 		return
@@ -321,7 +345,8 @@ func (h *Handler) ReplaceImportedItems(w http.ResponseWriter, r *http.Request) {
 	for _, it := range items {
 		exercises += len(it.Exercises)
 	}
-	web.JSON(w, http.StatusOK, map[string]any{"items": len(saved), "exercises": exercises})
+	web.JSON(w, http.StatusOK, map[string]any{"items": len(res.Items), "exercises": exercises,
+		"created": res.Created, "updated": res.Updated, "unchanged": res.Unchanged, "removed": res.Removed})
 }
 
 func (h *Handler) CreateExercise(w http.ResponseWriter, r *http.Request) {
@@ -566,3 +591,41 @@ func (h *Handler) UpdateMedia(w http.ResponseWriter, r *http.Request) {
 
 // lessonKind exposes a lesson's kind ("lesson" or "checkpoint").
 func lessonKind(k string) string { return coursedomain.KindOrDefault(k) }
+
+// CourseTranslations lists a course's localizable strings and their
+// translation into ?locale= (fa | ckb | en).
+func (h *Handler) CourseTranslations(w http.ResponseWriter, r *http.Request) {
+	list, err := h.svc.CourseTranslations(r.Context(), r.PathValue("id"), r.URL.Query().Get("locale"))
+	if err != nil {
+		web.Error(w, r, err)
+		return
+	}
+	translated := 0
+	for _, t := range list {
+		if t.Translation != "" {
+			translated++
+		}
+	}
+	if list == nil {
+		list = []usecase.TranslatableString{}
+	}
+	web.JSON(w, http.StatusOK, map[string]any{"strings": list, "total": len(list), "translated": translated})
+}
+
+// SaveTranslations upserts translations of source strings into one locale.
+func (h *Handler) SaveTranslations(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Locale  string                     `json:"locale"`
+		Entries []usecase.TranslationInput `json:"entries"`
+	}
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<20)).Decode(&in) != nil {
+		web.Error(w, r, apperr.ErrBadRequest)
+		return
+	}
+	saved, deleted, err := h.svc.SaveTranslations(r.Context(), in.Locale, in.Entries)
+	if err != nil {
+		web.Error(w, r, err)
+		return
+	}
+	web.JSON(w, http.StatusOK, map[string]any{"saved": saved, "deleted": deleted})
+}

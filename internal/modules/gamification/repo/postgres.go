@@ -58,20 +58,77 @@ func (r *PostgresRepo) DailyGoal(ctx context.Context, userID string, date time.T
 	return &g, nil
 }
 
-func (r *PostgresRepo) AddDailyXP(ctx context.Context, userID string, date time.Time, defaultTarget, xp int) (*domain.DailyGoal, error) {
-	g := domain.DailyGoal{Date: date}
-	err := r.pool.QueryRow(ctx,
-		`INSERT INTO daily_goals (user_id, goal_date, target_xp, earned_xp, met)
-		 VALUES ($1,$2,$3,$4, $4 >= $3)
+// addDailyXPSQL adds XP to a day's goal. The parameters are cast explicitly:
+// without the casts Postgres types $3/$4 as text from the "$4 >= $3"
+// comparison and rejects the whole statement ("inconsistent types deduced for
+// parameter $3"), so no goal row was ever written.
+const addDailyXPSQL = `INSERT INTO daily_goals (user_id, goal_date, target_xp, earned_xp, met)
+		 VALUES ($1, $2::date, $3::int, $4::int, $4::int >= $3::int)
 		 ON CONFLICT (user_id, goal_date) DO UPDATE SET
 		   earned_xp = daily_goals.earned_xp + EXCLUDED.earned_xp,
 		   met = (daily_goals.earned_xp + EXCLUDED.earned_xp) >= daily_goals.target_xp
-		 RETURNING target_xp, earned_xp, met`,
-		userID, date, defaultTarget, xp).Scan(&g.TargetXP, &g.EarnedXP, &g.Met)
+		 RETURNING target_xp, earned_xp, met`
+
+func (r *PostgresRepo) AddDailyXP(ctx context.Context, userID string, date time.Time, defaultTarget, xp int) (*domain.DailyGoal, error) {
+	g := domain.DailyGoal{Date: date}
+	err := r.pool.QueryRow(ctx, addDailyXPSQL, userID, date, defaultTarget, xp).Scan(&g.TargetXP, &g.EarnedXP, &g.Met)
 	if err != nil {
 		return nil, err
 	}
 	return &g, nil
+}
+
+// Mutate locks the user's row, applies the change and writes it back, plus the
+// day's goal and the one-time event, all in one transaction.
+func (r *PostgresRepo) Mutate(ctx context.Context, userID string, ch domain.Change) (bool, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx)
+	if ch.EventKey != "" {
+		tag, err := tx.Exec(ctx,
+			`INSERT INTO reward_events (user_id, event_key, xp) VALUES ($1, $2, $3::int) ON CONFLICT DO NOTHING`,
+			userID, ch.EventKey, ch.EventXP)
+		if err != nil {
+			return false, err
+		}
+		if tag.RowsAffected() == 0 {
+			return false, nil // already claimed: nothing changes
+		}
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO user_gamification (user_id, league) VALUES ($1, $2) ON CONFLICT (user_id) DO NOTHING`,
+		userID, domain.LeagueBronze); err != nil {
+		return false, err
+	}
+	st := domain.State{UserID: userID}
+	if err := tx.QueryRow(ctx,
+		`SELECT xp, gems, streak_days, longest_streak, league, last_active, daily_target_xp, last_reward, last_mix
+		   FROM user_gamification WHERE user_id=$1 FOR UPDATE`, userID).
+		Scan(&st.XP, &st.Gems, &st.Streak, &st.LongestStreak, &st.League, &st.LastActive, &st.DailyTargetXP, &st.LastReward, &st.LastMix); err != nil {
+		return false, err
+	}
+	if err := ch.Apply(&st); err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE user_gamification SET xp=$2, gems=$3, streak_days=$4, longest_streak=$5, league=$6,
+		   last_active=$7, daily_target_xp=$8, last_reward=$9, last_mix=$10, updated_at=now()
+		 WHERE user_id=$1`,
+		userID, st.XP, st.Gems, st.Streak, st.LongestStreak, st.League, st.LastActive, st.DailyTargetXP, st.LastReward, st.LastMix); err != nil {
+		return false, err
+	}
+	if ch.DailyXP != 0 {
+		target := st.DailyTargetXP
+		if target <= 0 {
+			target = ch.DefaultTarget
+		}
+		if _, err := tx.Exec(ctx, addDailyXPSQL, userID, ch.Day, target, ch.DailyXP); err != nil {
+			return false, err
+		}
+	}
+	return true, tx.Commit(ctx)
 }
 
 func (r *PostgresRepo) WeeklyTotals(ctx context.Context, from, to time.Time) ([]domain.WeeklyEntry, error) {
@@ -101,7 +158,7 @@ func (r *PostgresRepo) WeeklyTotals(ctx context.Context, from, to time.Time) ([]
 func (r *PostgresRepo) ActiveDays(ctx context.Context, userID string, from, to time.Time) (int, error) {
 	var n int
 	err := r.pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM daily_goals WHERE user_id=$1 AND earned > 0 AND day >= $2::date AND day < $3::date`,
+		`SELECT COUNT(*) FROM daily_goals WHERE user_id=$1 AND earned_xp > 0 AND goal_date >= $2::date AND goal_date < $3::date`,
 		userID, from, to).Scan(&n)
 	return n, err
 }

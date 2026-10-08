@@ -11,6 +11,8 @@ import (
 	"net/http"
 	neturl "net/url"
 	"time"
+
+	"github.com/leksuu/platform/internal/modules/billing/usecase"
 )
 
 // stubPaymentProvider simulates a gateway without any network. RequestPayment
@@ -34,6 +36,23 @@ func (stubPaymentProvider) RequestPayment(_ context.Context, _ int, _ string, ca
 
 func (stubPaymentProvider) VerifyPayment(_ context.Context, authority string, _ int) (string, error) {
 	return "STUBREF-" + authority, nil
+}
+
+// disabledPaymentProvider replaces the stub where simulated payments must not be
+// served (production) and stands in for a gateway that is not configured: the
+// stub approves every payment without charging anything, so offering it to real
+// users would hand out subscriptions for free. Every purchase fails with
+// "payments unavailable" until a real gateway is configured.
+type disabledPaymentProvider struct{}
+
+func (disabledPaymentProvider) Name() string { return "disabled" }
+
+func (disabledPaymentProvider) RequestPayment(context.Context, int, string, string) (string, string, error) {
+	return "", "", usecase.ErrPaymentsUnavailable
+}
+
+func (disabledPaymentProvider) VerifyPayment(context.Context, string, int) (string, error) {
+	return "", usecase.ErrPaymentsUnavailable
 }
 
 // zarinpalProvider talks to ZarinPal's v4 REST API (Iran's most common gateway).

@@ -22,6 +22,51 @@ var catalog = map[string]map[string]string{
 		LocaleFa:  "ایمیل الزامی است.",
 		LocaleCkb: "ئیمەیڵ پێویستە.",
 	},
+	"auth.email_invalid": {
+		LocaleEn:  "Enter a valid email address.",
+		LocaleFa:  "یک نشانی ایمیل معتبر وارد کنید.",
+		LocaleCkb: "ناونیشانێکی ئیمەیڵی دروست بنووسە.",
+	},
+	"lesson.locked": {
+		LocaleEn:  "This lesson is locked. Unlock it or subscribe to continue.",
+		LocaleFa:  "این درس قفل است. برای ادامه آن را باز کنید یا اشتراک بگیرید.",
+		LocaleCkb: "ئەم وانەیە داخراوە. بۆ بەردەوامبوون بیکەرەوە یان بەشداربە.",
+	},
+	"lesson.empty": {
+		LocaleEn:  "This lesson has no content yet, so it cannot be completed.",
+		LocaleFa:  "این درس هنوز محتوایی ندارد و نمی‌توان آن را تمام کرد.",
+		LocaleCkb: "ئەم وانەیە هێشتا ناوەڕۆکی نییە، بۆیە ناتوانرێت تەواو بکرێت.",
+	},
+	"lesson.incomplete": {
+		LocaleEn:  "Answer every exercise in the lesson before finishing it.",
+		LocaleFa:  "پیش از پایان درس، به همهٔ تمرین‌های آن پاسخ دهید.",
+		LocaleCkb: "پێش تەواوکردنی وانەکە وەڵامی هەموو ڕاهێنانەکانی بدەرەوە.",
+	},
+	"exercise.invalid_answer": {
+		LocaleEn:  "The answer is incomplete or not valid for this exercise.",
+		LocaleFa:  "پاسخ کامل نیست یا برای این تمرین معتبر نیست.",
+		LocaleCkb: "وەڵامەکە تەواو نییە یان بۆ ئەم ڕاهێنانە دروست نییە.",
+	},
+	"exercise.misconfigured": {
+		LocaleEn:  "This exercise cannot be checked right now.",
+		LocaleFa:  "این تمرین در حال حاضر قابل بررسی نیست.",
+		LocaleCkb: "ئەم ڕاهێنانە ئێستا ناتوانرێت پشکنین بکرێت.",
+	},
+	"exercise.no_assessment": {
+		LocaleEn:  "Record yourself first so your pronunciation can be scored.",
+		LocaleFa:  "ابتدا صدای خود را ضبط کنید تا تلفظ شما ارزیابی شود.",
+		LocaleCkb: "سەرەتا دەنگی خۆت تۆمار بکە بۆ ئەوەی گۆکردنت هەڵبسەنگێنرێت.",
+	},
+	"billing.payments_unavailable": {
+		LocaleEn:  "Online payment is not available right now. Please try again later.",
+		LocaleFa:  "پرداخت آنلاین در حال حاضر در دسترس نیست. لطفاً بعداً دوباره تلاش کنید.",
+		LocaleCkb: "پارەدانی ئۆنلاین ئێستا بەردەست نییە. تکایە دواتر دووبارە هەوڵ بدەرەوە.",
+	},
+	"game.daily_mix_incomplete": {
+		LocaleEn:  "Finish today's reviews and practise first to claim the bonus.",
+		LocaleFa:  "برای دریافت جایزه، ابتدا مرورها و تمرین امروز را انجام دهید.",
+		LocaleCkb: "بۆ وەرگرتنی خەڵاتەکە، سەرەتا پێداچوونەوە و ڕاهێنانی ئەمڕۆ تەواو بکە.",
+	},
 	"auth.password_required": {
 		LocaleEn:  "Password is required.",
 		LocaleFa:  "رمز عبور الزامی است.",
@@ -82,6 +127,11 @@ var catalog = map[string]map[string]string{
 		LocaleFa:  "درس یافت نشد.",
 		LocaleCkb: "وانەکە نەدۆزرایەوە.",
 	},
+	"lesson.source_conflict": {
+		LocaleEn:  "This unit already has a lesson imported from the same source.",
+		LocaleFa:  "این فصل از قبل درسی از همین منبع دارد.",
+		LocaleCkb: "ئەم بەشە پێشتر وانەیەکی لە هەمان سەرچاوە هەیە.",
+	},
 	"course.item_not_found": {
 		LocaleEn:  "Content item not found.",
 		LocaleFa:  "آیتم محتوا پیدا نشد.",
@@ -121,6 +171,11 @@ var catalog = map[string]map[string]string{
 		LocaleEn:  "Only image, audio, or video files are allowed.",
 		LocaleFa:  "فقط فایل عکس، صدا یا فیلم مجاز است.",
 		LocaleCkb: "تەنها فایلی وێنە، دەنگ یان ڤیدیۆ ڕێگەپێدراوە.",
+	},
+	"media.fetch_failed": {
+		LocaleEn:  "The file could not be downloaded right now. Please try again.",
+		LocaleFa:  "دریافت فایل در حال حاضر ممکن نشد. دوباره تلاش کنید.",
+		LocaleCkb: "ئێستا فایلەکە دانەبەزێنرا. تکایە دووبارە هەوڵ بدەرەوە.",
 	},
 	"user.invalid_cefr": {
 		LocaleEn:  "Invalid level.",

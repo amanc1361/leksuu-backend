@@ -240,6 +240,11 @@ type CardSnapshot struct {
 	Lapses       int       `json:"lapses"`
 	Suspended    bool      `json:"suspended"`
 	DueAt        time.Time `json:"due_at"`
+	// Rewarded records whether the review that replaced this state earned XP.
+	Rewarded bool `json:"rewarded,omitempty"`
+	// Undone marks the tombstone left by Undo: there is nothing left to undo,
+	// and a re-review of the restored state does not earn XP a second time.
+	Undone bool `json:"undone,omitempty"`
 }
 
 // DueCard is a review-ready projection: card state joined with its vocab so the

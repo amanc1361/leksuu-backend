@@ -108,27 +108,39 @@ func (s *Service) Review(ctx context.Context, userID, cardID string, g domain.Gr
 	if err != nil {
 		return nil, err
 	}
+	now := s.clock()
+	due := !c.DueAt.After(now)
+	// Review policy: a graduated card reviewed before it is due (a double
+	// submit, a stale session, a direct call) changes nothing — its schedule
+	// only advances on a scheduled review. A card in relearning (interval 0,
+	// shown again in the same session after "again") may take its learning step
+	// early, but only a scheduled (due) review earns XP, once: re-reviewing a
+	// state restored by Undo is not rewarded again (Undo itself keeps the XP).
+	if !due && c.IntervalDays > 0 {
+		return c, nil
+	}
+	rewarded := due && !(c.Prev != nil && c.Prev.Undone && c.Prev.Rewarded && c.Prev.DueAt.Equal(c.DueAt))
 	res := domain.Reschedule(domain.SchedInput{
 		IntervalDays: c.IntervalDays,
 		Reps:         c.Reps,
 		Lapses:       c.Lapses,
 		Ease:         c.Ease,
-	}, g, s.clock())
+	}, g, now)
 	// Capture the pre-review state so the learner can undo a misgrade.
 	c.Prev = &domain.CardSnapshot{
 		Box: c.Box, IntervalDays: c.IntervalDays, Ease: c.Ease,
 		Reps: c.Reps, Lapses: c.Lapses, Suspended: c.Suspended, DueAt: c.DueAt,
+		Rewarded: rewarded,
 	}
 	c.Box, c.IntervalDays, c.Reps, c.Lapses, c.Ease, c.DueAt = res.Box, res.IntervalDays, res.Reps, res.Lapses, res.Ease, res.Due
 	if res.Suspend {
 		c.Suspended = true // stubborn card: stop drilling until the learner relearns it
 	}
-	now := s.clock()
 	if err := s.repo.UpdateCard(ctx, c); err != nil {
 		return nil, err
 	}
 	_ = s.repo.LogReview(ctx, userID, now) // best-effort; powers the daily goal + streak
-	if s.rewarder != nil {
+	if rewarded && s.rewarder != nil {
 		_ = s.rewarder.Award(ctx, userID, 2, "srs_review")
 	}
 	return c, nil
@@ -265,19 +277,20 @@ func (s *Service) Lookup(ctx context.Context, language, lemma string) (*domain.V
 
 // Undo restores the card's schedule to what it was before the last review
 // (one level, Anki-style). XP from the reviewed attempt is intentionally kept:
-// the recall attempt genuinely happened — undo only fixes the schedule.
+// the recall attempt genuinely happened — undo only fixes the schedule. The
+// restored state is marked so reviewing it again does not earn XP twice.
 func (s *Service) Undo(ctx context.Context, userID, cardID string) (*domain.Card, error) {
 	c, err := s.repo.Card(ctx, userID, cardID)
 	if err != nil {
 		return nil, err
 	}
-	if c.Prev == nil {
+	if c.Prev == nil || c.Prev.Undone {
 		return nil, apperr.New("srs.nothing_to_undo", apperr.KindConflict)
 	}
 	p := c.Prev
 	c.Box, c.IntervalDays, c.Ease, c.Reps, c.Lapses, c.Suspended, c.DueAt =
 		p.Box, p.IntervalDays, p.Ease, p.Reps, p.Lapses, p.Suspended, p.DueAt
-	c.Prev = nil
+	c.Prev = &domain.CardSnapshot{Undone: true, Rewarded: p.Rewarded, DueAt: p.DueAt}
 	if err := s.repo.UpdateCard(ctx, c); err != nil {
 		return nil, err
 	}

@@ -1,10 +1,12 @@
 package usecase
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 
 	"github.com/leksuu/platform/internal/modules/course/domain"
+	"github.com/leksuu/platform/internal/shared/apperr"
 )
 
 // Supported interactive exercise types (mirror the DB CHECK + the frontend renderers).
@@ -23,84 +25,93 @@ const (
 	TypeFillGaps      = "fill_gaps"        // sentence with 2+ ordered blanks, each with its own answer key
 )
 
+var (
+	// ErrInvalidAnswer: the submitted answer is missing, malformed, the wrong
+	// shape for the exercise, or out of range. It is rejected before grading,
+	// so it is never recorded as an attempt and can never count as correct.
+	ErrInvalidAnswer = apperr.New("exercise.invalid_answer", apperr.KindValidation)
+	// ErrExerciseMisconfigured: the stored answer key cannot be graded (an
+	// unknown type or a malformed key). A content problem, never the learner's.
+	ErrExerciseMisconfigured = apperr.New("exercise.misconfigured", apperr.KindInternal)
+)
+
+// decodeAnswer strictly decodes a learner answer: an absent, null or malformed
+// body, or one with unknown fields, is invalid.
+func decodeAnswer(raw json.RawMessage, v any) error {
+	if len(bytes.TrimSpace(raw)) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return ErrInvalidAnswer
+	}
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.DisallowUnknownFields()
+	if d.Decode(v) != nil {
+		return ErrInvalidAnswer
+	}
+	return nil
+}
+
+// decodeKey decodes a stored answer key; a malformed key is a content error.
+func decodeKey(raw json.RawMessage, v any) error {
+	if len(raw) == 0 || json.Unmarshal(raw, v) != nil {
+		return ErrExerciseMisconfigured
+	}
+	return nil
+}
+
+// promptLen returns the length of a list in the prompt (e.g. "options",
+// "tokens"), or -1 when the prompt does not carry it.
+func promptLen(prompt json.RawMessage, field string) int {
+	var p map[string]json.RawMessage
+	if json.Unmarshal(prompt, &p) != nil {
+		return -1
+	}
+	var list []json.RawMessage
+	if raw, ok := p[field]; !ok || json.Unmarshal(raw, &list) != nil {
+		return -1
+	}
+	return len(list)
+}
+
 // grade evaluates a learner's answer SERVER-SIDE against the exercise's answer
 // key, returning whether it was correct and the correct solution (for feedback
 // shown only after the attempt). The answer key never leaves the browse API.
-func grade(ex *domain.Exercise, answer json.RawMessage) (bool, json.RawMessage) {
+// Speak exercises are not graded here: their score comes from the server's
+// pronunciation assessment (see gradeSpeak).
+func grade(ex *domain.Exercise, answer json.RawMessage) (bool, json.RawMessage, error) {
 	switch ex.Type {
 	case TypeMCQ, TypeListenChoose:
 		var key struct {
-			Correct int `json:"correct"`
+			Correct *int `json:"correct"`
 		}
 		var ans struct {
-			Choice int `json:"choice"`
+			Choice *int `json:"choice"`
 		}
-		_ = json.Unmarshal(ex.AnswerKey, &key)
-		_ = json.Unmarshal(answer, &ans)
-		sol, _ := json.Marshal(map[string]int{"choice": key.Correct})
-		return ans.Choice == key.Correct, sol
+		if err := decodeKey(ex.AnswerKey, &key); err != nil || key.Correct == nil {
+			return false, nil, ErrExerciseMisconfigured
+		}
+		if err := decodeAnswer(answer, &ans); err != nil || ans.Choice == nil || *ans.Choice < 0 {
+			return false, nil, ErrInvalidAnswer
+		}
+		if n := promptLen(ex.Prompt, "options"); n >= 0 && *ans.Choice >= n {
+			return false, nil, ErrInvalidAnswer
+		}
+		sol, _ := json.Marshal(map[string]int{"choice": *key.Correct})
+		return *ans.Choice == *key.Correct, sol, nil
 
 	case TypeFillBlank, TypeDictation:
 		var key struct {
 			Answers []string `json:"answers"`
 		}
 		var ans struct {
-			Text string `json:"text"`
+			Text *string `json:"text"`
 		}
-		_ = json.Unmarshal(ex.AnswerKey, &key)
-		_ = json.Unmarshal(answer, &ans)
-		correct := false
-		for _, a := range key.Answers {
-			if normalize(a) == normalize(ans.Text) {
-				correct = true
-				break
-			}
+		if err := decodeKey(ex.AnswerKey, &key); err != nil || len(key.Answers) == 0 {
+			return false, nil, ErrExerciseMisconfigured
 		}
-		var first string
-		if len(key.Answers) > 0 {
-			first = key.Answers[0]
+		if err := decodeAnswer(answer, &ans); err != nil || ans.Text == nil || strings.TrimSpace(*ans.Text) == "" {
+			return false, nil, ErrInvalidAnswer
 		}
-		sol, _ := json.Marshal(map[string]string{"text": first})
-		return correct, sol
-
-	case TypeFillGaps:
-		// key.Gaps[i] is the list of accepted answers for gap i (ordered).
-		// The learner submits one string per gap, in order; all must match.
-		var key struct {
-			Gaps [][]string `json:"gaps"`
-		}
-		var ans struct {
-			Gaps []string `json:"gaps"`
-		}
-		_ = json.Unmarshal(ex.AnswerKey, &key)
-		_ = json.Unmarshal(answer, &ans)
-		correct := len(key.Gaps) > 0 && len(ans.Gaps) == len(key.Gaps)
-		if correct {
-			for i, accepted := range key.Gaps {
-				hit := false
-				for _, a := range accepted {
-					if normalize(a) == normalize(ans.Gaps[i]) {
-						hit = true
-						break
-					}
-				}
-				if !hit {
-					correct = false
-					break
-				}
-			}
-		}
-		// Feedback shows the first accepted answer of each gap, in order.
-		first := make([]string, 0, len(key.Gaps))
-		for _, accepted := range key.Gaps {
-			if len(accepted) > 0 {
-				first = append(first, accepted[0])
-			} else {
-				first = append(first, "")
-			}
-		}
-		sol, _ := json.Marshal(map[string][]string{"gaps": first})
-		return correct, sol
+		sol, _ := json.Marshal(map[string]string{"text": key.Answers[0]})
+		return acceptable(key.Answers, *ans.Text), sol, nil
 
 	case TypeReorder, TypeSentenceBuild:
 		var key struct {
@@ -109,10 +120,14 @@ func grade(ex *domain.Exercise, answer json.RawMessage) (bool, json.RawMessage) 
 		var ans struct {
 			Order []string `json:"order"`
 		}
-		_ = json.Unmarshal(ex.AnswerKey, &key)
-		_ = json.Unmarshal(answer, &ans)
+		if err := decodeKey(ex.AnswerKey, &key); err != nil || len(key.Order) == 0 {
+			return false, nil, ErrExerciseMisconfigured
+		}
+		if err := decodeAnswer(answer, &ans); err != nil || len(ans.Order) == 0 {
+			return false, nil, ErrInvalidAnswer
+		}
 		sol, _ := json.Marshal(map[string][]string{"order": key.Order})
-		return equalSeq(key.Order, ans.Order), sol
+		return equalSeq(key.Order, ans.Order), sol, nil
 
 	case TypeMatch, TypeMatchImage:
 		var key struct {
@@ -121,22 +136,35 @@ func grade(ex *domain.Exercise, answer json.RawMessage) (bool, json.RawMessage) 
 		var ans struct {
 			Pairs [][]string `json:"pairs"`
 		}
-		_ = json.Unmarshal(ex.AnswerKey, &key)
-		_ = json.Unmarshal(answer, &ans)
+		if err := decodeKey(ex.AnswerKey, &key); err != nil || len(key.Pairs) == 0 {
+			return false, nil, ErrExerciseMisconfigured
+		}
+		if err := decodeAnswer(answer, &ans); err != nil || len(ans.Pairs) == 0 {
+			return false, nil, ErrInvalidAnswer
+		}
+		for _, p := range ans.Pairs {
+			if len(p) != 2 {
+				return false, nil, ErrInvalidAnswer
+			}
+		}
 		sol, _ := json.Marshal(map[string][][]string{"pairs": key.Pairs})
-		return samePairs(key.Pairs, ans.Pairs), sol
+		return samePairs(key.Pairs, ans.Pairs), sol, nil
 
 	case TypeTrueFalse:
 		var key struct {
-			Answer bool `json:"answer"`
+			Answer *bool `json:"answer"`
 		}
 		var ans struct {
-			Value bool `json:"value"`
+			Value *bool `json:"value"`
 		}
-		_ = json.Unmarshal(ex.AnswerKey, &key)
-		_ = json.Unmarshal(answer, &ans)
-		sol, _ := json.Marshal(map[string]bool{"answer": key.Answer})
-		return ans.Value == key.Answer, sol
+		if err := decodeKey(ex.AnswerKey, &key); err != nil || key.Answer == nil {
+			return false, nil, ErrExerciseMisconfigured
+		}
+		if err := decodeAnswer(answer, &ans); err != nil || ans.Value == nil {
+			return false, nil, ErrInvalidAnswer
+		}
+		sol, _ := json.Marshal(map[string]bool{"answer": *key.Answer})
+		return *ans.Value == *key.Answer, sol, nil
 
 	case TypeSelectWords:
 		// Order-free: the learner must pick exactly the keyed tiles, no more.
@@ -146,30 +174,113 @@ func grade(ex *domain.Exercise, answer json.RawMessage) (bool, json.RawMessage) 
 		var ans struct {
 			Selected []int `json:"selected"`
 		}
-		_ = json.Unmarshal(ex.AnswerKey, &key)
-		_ = json.Unmarshal(answer, &ans)
+		if err := decodeKey(ex.AnswerKey, &key); err != nil || len(key.Selected) == 0 {
+			return false, nil, ErrExerciseMisconfigured
+		}
+		if err := decodeAnswer(answer, &ans); err != nil || len(ans.Selected) == 0 {
+			return false, nil, ErrInvalidAnswer
+		}
+		n := promptLen(ex.Prompt, "tokens")
+		seen := map[int]bool{}
+		for _, i := range ans.Selected {
+			if i < 0 || (n >= 0 && i >= n) || seen[i] {
+				return false, nil, ErrInvalidAnswer
+			}
+			seen[i] = true
+		}
 		sol, _ := json.Marshal(map[string][]int{"selected": key.Selected})
-		return sameIndexSet(key.Selected, ans.Selected), sol
+		return sameIndexSet(key.Selected, ans.Selected), sol, nil
 
-	case TypeSpeak:
-		// The client records audio, scores it via the pronunciation service, and
-		// submits the achieved overall score. Pass if it meets the minimum.
+	case TypeFillGaps:
+		// Every gap is answered independently and every gap must be right: one
+		// correct gap can never satisfy the whole sentence. key.gaps[i] lists
+		// the accepted answers of gap i ("aren't" | "are not"). With exact set
+		// (answers picked from tiles) the tile text must match as written:
+		// tiles may differ only in capitals ("His" vs "his") on purpose.
 		var key struct {
-			MinScore int `json:"min_score"`
+			Gaps  [][]string `json:"gaps"`
+			Exact bool       `json:"exact"`
 		}
 		var ans struct {
-			Score int `json:"score"`
+			Gaps []string `json:"gaps"`
 		}
-		_ = json.Unmarshal(ex.AnswerKey, &key)
-		_ = json.Unmarshal(answer, &ans)
-		min := key.MinScore
-		if min <= 0 {
-			min = 60
+		if err := decodeKey(ex.AnswerKey, &key); err != nil || len(key.Gaps) == 0 {
+			return false, nil, ErrExerciseMisconfigured
 		}
-		sol, _ := json.Marshal(map[string]int{"min_score": min})
-		return ans.Score >= min, sol
+		for _, g := range key.Gaps {
+			if len(g) == 0 {
+				return false, nil, ErrExerciseMisconfigured
+			}
+		}
+		if err := decodeAnswer(answer, &ans); err != nil || len(ans.Gaps) != len(key.Gaps) {
+			return false, nil, ErrInvalidAnswer
+		}
+		for _, a := range ans.Gaps {
+			if strings.TrimSpace(a) == "" {
+				return false, nil, ErrInvalidAnswer
+			}
+		}
+		correct := true
+		first := make([]string, len(key.Gaps))
+		for i, accepted := range key.Gaps {
+			first[i] = accepted[0]
+			ok := acceptable(accepted, ans.Gaps[i])
+			if key.Exact {
+				ok = acceptableExact(accepted, ans.Gaps[i])
+			}
+			if !ok {
+				correct = false
+			}
+		}
+		sol, _ := json.Marshal(map[string][]string{"gaps": first})
+		return correct, sol, nil
 	}
-	return false, nil
+	return false, nil, ErrExerciseMisconfigured
+}
+
+// speakMinScore is the pass mark of a speak exercise (default 60 of 100).
+func speakMinScore(ex *domain.Exercise) int {
+	var key struct {
+		MinScore int `json:"min_score"`
+	}
+	_ = json.Unmarshal(ex.AnswerKey, &key)
+	if key.MinScore <= 0 || key.MinScore > 100 {
+		return 60
+	}
+	return key.MinScore
+}
+
+// gradeSpeak grades a speak exercise from a score the server itself produced
+// (the learner's latest pronunciation assessment of this exercise). Scores
+// outside 0..100 are rejected.
+func gradeSpeak(ex *domain.Exercise, score int) (bool, json.RawMessage, error) {
+	if score < 0 || score > 100 {
+		return false, nil, ErrInvalidAnswer
+	}
+	min := speakMinScore(ex)
+	sol, _ := json.Marshal(map[string]int{"min_score": min})
+	return score >= min, sol, nil
+}
+
+func acceptable(accepted []string, answer string) bool {
+	for _, a := range accepted {
+		if normalize(a) == normalize(answer) {
+			return true
+		}
+	}
+	return false
+}
+
+// acceptableExact compares as written, ignoring only surrounding and repeated
+// whitespace.
+func acceptableExact(accepted []string, answer string) bool {
+	a := strings.Join(strings.Fields(answer), " ")
+	for _, want := range accepted {
+		if strings.Join(strings.Fields(want), " ") == a {
+			return true
+		}
+	}
+	return false
 }
 
 func normalize(s string) string {

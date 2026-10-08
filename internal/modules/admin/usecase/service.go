@@ -30,7 +30,12 @@ type Repository interface {
 	CreateExercise(ctx context.Context, e *coursedomain.Exercise) error
 	Items(ctx context.Context, lessonID string) ([]coursedomain.LessonItem, error)
 	DeleteItem(ctx context.Context, itemID string) error
-	ReplaceImportedItems(ctx context.Context, lessonID string, items []coursedomain.ImportedItem) ([]coursedomain.LessonItem, error)
+	ReplaceImportedItems(ctx context.Context, lessonID string, items []coursedomain.ImportedItem) (*coursedomain.ImportedItemsResult, error)
+	LessonsBySourceID(ctx context.Context, courseID, sourceID string) ([]coursedomain.Lesson, error)
+	SetUnitSourceID(ctx context.Context, unitID, sourceID string) error
+	ContentTranslations(ctx context.Context, hashes []string) ([]coursedomain.ContentTranslation, error)
+	UpsertContentTranslations(ctx context.Context, ts []coursedomain.ContentTranslation) error
+	DeleteContentTranslation(ctx context.Context, sourceHash, locale string) error
 	ReorderItems(ctx context.Context, lessonID string, orderedIDs []string) error
 	Units(ctx context.Context, courseID string) ([]coursedomain.Unit, error)
 	Unit(ctx context.Context, id string) (*coursedomain.Unit, error)
@@ -67,22 +72,37 @@ func (s *Service) ListCourses(ctx context.Context) ([]coursedomain.Course, error
 	return s.repo.ListAllCourses(ctx)
 }
 
-type CreateCourseInput struct{ Language, CEFR, Title, Description, ImageURL string }
+type CreateCourseInput struct{ Language, CEFR, Title, Description, ImageURL, SourceID string }
 
-// CreateCourse authors a new course in any target language (unpublished).
-func (s *Service) CreateCourse(ctx context.Context, in CreateCourseInput) (*coursedomain.Course, error) {
+// CreateCourse authors a new course in any target language (unpublished). With
+// a SourceID (an imported course pack) it is idempotent: the course imported
+// from that source earlier is returned with reused=true, so retrying an
+// interrupted "new course" import never creates a second course.
+func (s *Service) CreateCourse(ctx context.Context, in CreateCourseInput) (*coursedomain.Course, bool, error) {
 	if in.Language == "" || in.Title == "" {
-		return nil, apperr.ErrBadRequest
+		return nil, false, apperr.ErrBadRequest
+	}
+	sourceID := strings.TrimSpace(in.SourceID)
+	if sourceID != "" {
+		courses, err := s.repo.ListAllCourses(ctx)
+		if err != nil {
+			return nil, false, err
+		}
+		for i := range courses {
+			if courses[i].SourceID == sourceID {
+				return &courses[i], true, nil
+			}
+		}
 	}
 	cefr := in.CEFR
 	if cefr == "" {
 		cefr = "A1"
 	}
-	c := &coursedomain.Course{Language: in.Language, CEFR: cefr, Title: in.Title, Description: in.Description, ImageURL: in.ImageURL, Published: false}
+	c := &coursedomain.Course{Language: in.Language, CEFR: cefr, Title: in.Title, Description: in.Description, ImageURL: in.ImageURL, Published: false, SourceID: sourceID}
 	if err := s.repo.CreateCourse(ctx, c); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return c, nil
+	return c, false, nil
 }
 
 func (s *Service) Publish(ctx context.Context, courseID string, published bool) error {
@@ -116,18 +136,48 @@ func (s *Service) Units(ctx context.Context, courseID string) ([]coursedomain.Un
 	return s.repo.Units(ctx, courseID)
 }
 
-func (s *Service) CreateUnit(ctx context.Context, courseID, title, description string) (*coursedomain.Unit, error) {
+// CreateUnit adds a unit (chapter) at the end of a course. With a sourceID (an
+// imported chapter) it is idempotent: the unit already imported from that
+// chapter is returned with reused=true. A unit an older importer created
+// without a source id but with the same title is adopted (its source id is
+// recorded) instead of being duplicated.
+func (s *Service) CreateUnit(ctx context.Context, courseID, title, description, sourceID string) (*coursedomain.Unit, bool, error) {
 	if title == "" {
-		return nil, apperr.ErrBadRequest
+		return nil, false, apperr.ErrBadRequest
 	}
 	if _, err := s.repo.Course(ctx, courseID); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	u := &coursedomain.Unit{CourseID: courseID, Title: title, Description: description}
+	sourceID = strings.TrimSpace(sourceID)
+	if sourceID != "" {
+		units, err := s.repo.Units(ctx, courseID)
+		if err != nil {
+			return nil, false, err
+		}
+		for i := range units {
+			if units[i].SourceID == sourceID {
+				return &units[i], true, nil
+			}
+		}
+		for i := range units {
+			if units[i].SourceID == "" && normalizeTitle(units[i].Title) == normalizeTitle(title) {
+				if err := s.repo.SetUnitSourceID(ctx, units[i].ID, sourceID); err != nil {
+					return nil, false, err
+				}
+				units[i].SourceID = sourceID
+				return &units[i], true, nil
+			}
+		}
+	}
+	u := &coursedomain.Unit{CourseID: courseID, Title: title, Description: description, SourceID: sourceID}
 	if err := s.repo.CreateUnit(ctx, u); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return u, nil
+	return u, false, nil
+}
+
+func normalizeTitle(v string) string {
+	return strings.Join(strings.Fields(strings.ToLower(v)), " ")
 }
 
 func (s *Service) ReorderUnits(ctx context.Context, courseID string, orderedIDs []string) error {
@@ -142,30 +192,87 @@ func (s *Service) ReorderLessons(ctx context.Context, unitID string, orderedIDs 
 	return s.repo.ReorderLessons(ctx, unitID, orderedIDs)
 }
 
-func (s *Service) AddLessonToUnit(ctx context.Context, unitID, title, sourceID string, position int) (*coursedomain.Lesson, bool, error) {
+// LessonPlacement says how AddLessonToUnit satisfied an imported lesson.
+type LessonPlacement struct {
+	Reused bool // an existing lesson with the source id was used
+	Moved  bool // ...and it was moved here from another unit of the course
+	// Duplicates are other lessons of the course carrying the same source id
+	// (left by an older importer). They are reported, never deleted: they may
+	// hold learner progress.
+	Duplicates []string
+}
+
+// AddLessonToUnit creates a lesson in a unit. With a sourceID (an imported
+// lesson) it is idempotent across the whole course: an existing lesson with
+// that source id is reused, and moved into this unit if an earlier import put
+// it elsewhere — never duplicated.
+func (s *Service) AddLessonToUnit(ctx context.Context, unitID, title, sourceID string, position int) (*coursedomain.Lesson, LessonPlacement, error) {
+	var placed LessonPlacement
 	if title == "" {
-		return nil, false, apperr.ErrBadRequest
+		return nil, placed, apperr.ErrBadRequest
 	}
-	if _, err := s.repo.Unit(ctx, unitID); err != nil {
-		return nil, false, err
+	unit, err := s.repo.Unit(ctx, unitID)
+	if err != nil {
+		return nil, placed, err
 	}
 	sourceID = strings.TrimSpace(sourceID)
 	if sourceID != "" {
-		lessons, err := s.repo.LessonsByUnit(ctx, unitID)
+		found, err := s.repo.LessonsBySourceID(ctx, unit.CourseID, sourceID)
 		if err != nil {
-			return nil, false, err
+			return nil, placed, err
 		}
-		for i := range lessons {
-			if lessons[i].SourceID == sourceID {
-				return &lessons[i], true, nil
+		if len(found) > 0 {
+			// A copy already in this unit is used as is: a unit holds at most
+			// one lesson per source (lessons_unit_source_id_uq), so no other
+			// copy could be moved in. Otherwise move the copy holding the most
+			// content (imported and hand-authored items, and with them learner
+			// progress): an empty shell left by an older importer must never
+			// win over the real lesson.
+			pick := -1
+			for i := range found {
+				if found[i].UnitID == unitID {
+					pick = i
+					break
+				}
 			}
+			if pick < 0 {
+				best := -1
+				for i := range found {
+					items, err := s.repo.Items(ctx, found[i].ID)
+					if err != nil {
+						return nil, placed, err
+					}
+					if len(items) > best {
+						pick, best = i, len(items)
+					}
+				}
+			}
+			for i := range found {
+				if i != pick {
+					placed.Duplicates = append(placed.Duplicates, found[i].ID)
+				}
+			}
+			l := found[pick]
+			placed.Reused = true
+			if l.UnitID != unitID {
+				if err := s.repo.MoveLessonToUnit(ctx, l.ID, unitID); err != nil {
+					return nil, placed, err
+				}
+				placed.Moved = true
+				moved, err := s.repo.Lesson(ctx, l.ID)
+				if err != nil {
+					return nil, placed, err
+				}
+				l = *moved
+			}
+			return &l, placed, nil
 		}
 	}
 	l := &coursedomain.Lesson{UnitID: unitID, Title: title, SourceID: sourceID, Position: position}
 	if err := s.repo.CreateLesson(ctx, l); err != nil {
-		return nil, false, err
+		return nil, placed, err
 	}
-	return l, false, nil
+	return l, placed, nil
 }
 
 func (s *Service) UpdateLesson(ctx context.Context, id, title, focus, coverURL string, objective json.RawMessage, kind string) (*coursedomain.Lesson, error) {
@@ -270,7 +377,7 @@ const maxImportedItems = 500
 // ReplaceImportedItems atomically replaces what earlier imports put in a
 // lesson. Every item needs a kind and a source_ref (that is what marks it as
 // imported), and every exercise a type; the DB CHECKs validate the values.
-func (s *Service) ReplaceImportedItems(ctx context.Context, lessonID string, items []coursedomain.ImportedItem) ([]coursedomain.LessonItem, error) {
+func (s *Service) ReplaceImportedItems(ctx context.Context, lessonID string, items []coursedomain.ImportedItem) (*coursedomain.ImportedItemsResult, error) {
 	if lessonID == "" || len(items) > maxImportedItems {
 		return nil, apperr.ErrBadRequest
 	}

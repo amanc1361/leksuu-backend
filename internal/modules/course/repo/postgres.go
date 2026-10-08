@@ -7,6 +7,7 @@ import (
 	"errors"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/leksuu/platform/internal/modules/course/domain"
@@ -22,7 +23,7 @@ func NewPostgresCourseRepo(pool *pgxpool.Pool) *PostgresCourseRepo {
 
 func (r *PostgresCourseRepo) ListCourses(ctx context.Context, language, cefr string) ([]domain.Course, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT id, language, cefr_level, title, coalesce(description,''), coalesce(image_url,''), version, published
+		`SELECT id, language, cefr_level, title, coalesce(description,''), coalesce(image_url,''), version, published, coalesce(source_id,'')
 		   FROM courses
 		  WHERE published
 		    AND ($1 = '' OR language = $1)
@@ -35,7 +36,7 @@ func (r *PostgresCourseRepo) ListCourses(ctx context.Context, language, cefr str
 	var out []domain.Course
 	for rows.Next() {
 		var c domain.Course
-		if err := rows.Scan(&c.ID, &c.Language, &c.CEFR, &c.Title, &c.Description, &c.ImageURL, &c.Version, &c.Published); err != nil {
+		if err := rows.Scan(&c.ID, &c.Language, &c.CEFR, &c.Title, &c.Description, &c.ImageURL, &c.Version, &c.Published, &c.SourceID); err != nil {
 			return nil, err
 		}
 		out = append(out, c)
@@ -46,9 +47,9 @@ func (r *PostgresCourseRepo) ListCourses(ctx context.Context, language, cefr str
 func (r *PostgresCourseRepo) Course(ctx context.Context, id string) (*domain.Course, error) {
 	var c domain.Course
 	err := r.pool.QueryRow(ctx,
-		`SELECT id, language, cefr_level, title, coalesce(description,''), coalesce(image_url,''), version, published
+		`SELECT id, language, cefr_level, title, coalesce(description,''), coalesce(image_url,''), version, published, coalesce(source_id,'')
 		   FROM courses WHERE id=$1`, id).
-		Scan(&c.ID, &c.Language, &c.CEFR, &c.Title, &c.Description, &c.ImageURL, &c.Version, &c.Published)
+		Scan(&c.ID, &c.Language, &c.CEFR, &c.Title, &c.Description, &c.ImageURL, &c.Version, &c.Published, &c.SourceID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrCourseNotFound
 	}
@@ -150,6 +151,40 @@ func (r *PostgresCourseRepo) LessonCount(ctx context.Context, courseID string) (
 	return n, err
 }
 
+// ExerciseLessonID returns the lesson an exercise belongs to.
+func (r *PostgresCourseRepo) ExerciseLessonID(ctx context.Context, exerciseID string) (string, error) {
+	var id string
+	err := r.pool.QueryRow(ctx,
+		`SELECT li.lesson_id::text FROM exercises e JOIN lesson_items li ON li.id = e.lesson_item_id WHERE e.id=$1`,
+		exerciseID).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", domain.ErrExerciseNotFound
+	}
+	return id, err
+}
+
+// LessonItemCounts returns the number of items of every lesson in a course.
+func (r *PostgresCourseRepo) LessonItemCounts(ctx context.Context, courseID string) (map[string]int, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT l.id::text, count(li.id)
+		   FROM lessons l LEFT JOIN lesson_items li ON li.lesson_id = l.id
+		  WHERE l.course_id=$1 GROUP BY l.id`, courseID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var id string
+		var n int
+		if err := rows.Scan(&id, &n); err != nil {
+			return nil, err
+		}
+		out[id] = n
+	}
+	return out, rows.Err()
+}
+
 // --- progress ---
 
 type PostgresProgressRepo struct{ pool *pgxpool.Pool }
@@ -172,6 +207,30 @@ func (r *PostgresProgressRepo) ExerciseAttempts(ctx context.Context, userID, exe
 		`SELECT count(*) FROM user_progress
 		  WHERE user_id=$1 AND entity_type='exercise' AND entity_id=$2`, userID, exerciseID).Scan(&n)
 	return n, err
+}
+
+// AttemptedExercises reports which of the given exercises the user has
+// answered at least once.
+func (r *PostgresProgressRepo) AttemptedExercises(ctx context.Context, userID string, exerciseIDs []string) (map[string]bool, error) {
+	out := map[string]bool{}
+	if len(exerciseIDs) == 0 {
+		return out, nil
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT DISTINCT entity_id::text FROM user_progress
+		  WHERE user_id=$1 AND entity_type='exercise' AND entity_id::text = ANY($2::text[])`, userID, exerciseIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
 }
 
 func (r *PostgresProgressRepo) CompletedLessons(ctx context.Context, userID, courseID string) (int, error) {
@@ -211,7 +270,7 @@ func (r *PostgresProgressRepo) CompletedLessonIDs(ctx context.Context, userID, c
 
 func (r *PostgresCourseRepo) ListAllCourses(ctx context.Context) ([]domain.Course, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT id, language, cefr_level, title, coalesce(description,''), coalesce(image_url,''), version, published
+		`SELECT id, language, cefr_level, title, coalesce(description,''), coalesce(image_url,''), version, published, coalesce(source_id,'')
 		   FROM courses ORDER BY language, cefr_level, title`)
 	if err != nil {
 		return nil, err
@@ -220,7 +279,7 @@ func (r *PostgresCourseRepo) ListAllCourses(ctx context.Context) ([]domain.Cours
 	var out []domain.Course
 	for rows.Next() {
 		var c domain.Course
-		if err := rows.Scan(&c.ID, &c.Language, &c.CEFR, &c.Title, &c.Description, &c.ImageURL, &c.Version, &c.Published); err != nil {
+		if err := rows.Scan(&c.ID, &c.Language, &c.CEFR, &c.Title, &c.Description, &c.ImageURL, &c.Version, &c.Published, &c.SourceID); err != nil {
 			return nil, err
 		}
 		out = append(out, c)
@@ -230,9 +289,9 @@ func (r *PostgresCourseRepo) ListAllCourses(ctx context.Context) ([]domain.Cours
 
 func (r *PostgresCourseRepo) CreateCourse(ctx context.Context, c *domain.Course) error {
 	return r.pool.QueryRow(ctx,
-		`INSERT INTO courses (language, cefr_level, title, description, image_url, version, published)
-		 VALUES ($1,$2,$3,$4,NULLIF($5,''), COALESCE(NULLIF($6,0),1), $7) RETURNING id`,
-		c.Language, c.CEFR, c.Title, c.Description, c.ImageURL, c.Version, c.Published).Scan(&c.ID)
+		`INSERT INTO courses (language, cefr_level, title, description, image_url, version, published, source_id)
+		 VALUES ($1,$2,$3,$4,NULLIF($5,''), COALESCE(NULLIF($6,0),1), $7, NULLIF($8,'')) RETURNING id`,
+		c.Language, c.CEFR, c.Title, c.Description, c.ImageURL, c.Version, c.Published, c.SourceID).Scan(&c.ID)
 }
 
 func (r *PostgresCourseRepo) SetPublished(ctx context.Context, courseID string, published bool) error {
@@ -269,6 +328,10 @@ func (r *PostgresCourseRepo) MoveLessonToUnit(ctx context.Context, lessonID, uni
 		lessonID, unitID).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.ErrLessonNotFound
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.SQLState() == "23505" {
+		return domain.ErrLessonSourceConflict // lessons_unit_source_id_uq
 	}
 	return err
 }
@@ -346,65 +409,193 @@ func (r *PostgresCourseRepo) DeleteItem(ctx context.Context, itemID string) erro
 	return err
 }
 
-// ReplaceImportedItems swaps every imported item of a lesson (source_ref set)
-// for the given set in one transaction, so a failed re-import never leaves a
-// half-filled lesson. Hand-authored items stay first; imported ones follow in
-// the given order. Inserts are pipelined: one round trip for all items, one
-// for all exercises.
-func (r *PostgresCourseRepo) ReplaceImportedItems(ctx context.Context, lessonID string, items []domain.ImportedItem) ([]domain.LessonItem, error) {
+// ReplaceImportedItems syncs a lesson's imported items (source_ref set) to the
+// given set in one transaction, so a failed re-import never leaves a
+// half-filled lesson. Items are matched by (source_ref, occurrence): a matched
+// item is updated in place and keeps its ID — and with it every learner row
+// that references it (pronunciation scores, shadowing, exercise attempts) —
+// new items are inserted and imported items no longer in the source are
+// removed. Hand-authored items stay first; imported ones follow in the given
+// order.
+func (r *PostgresCourseRepo) ReplaceImportedItems(ctx context.Context, lessonID string, items []domain.ImportedItem) (*domain.ImportedItemsResult, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx,
-		`DELETE FROM exercises WHERE lesson_item_id IN
-		   (SELECT id FROM lesson_items WHERE lesson_id=$1 AND source_ref IS NOT NULL)`, lessonID); err != nil {
+	// Serialize concurrent syncs of the same lesson.
+	if _, err := tx.Exec(ctx, `SELECT id FROM lessons WHERE id=$1 FOR UPDATE`, lessonID); err != nil {
 		return nil, err
 	}
-	if _, err := tx.Exec(ctx, `DELETE FROM lesson_items WHERE lesson_id=$1 AND source_ref IS NOT NULL`, lessonID); err != nil {
+
+	type existingItem struct {
+		id, kind string
+		position int
+		payload  []byte
+	}
+	rows, err := tx.Query(ctx,
+		`SELECT id, kind, position, payload::text, source_ref FROM lesson_items
+		  WHERE lesson_id=$1 AND source_ref IS NOT NULL ORDER BY position`, lessonID)
+	if err != nil {
+		return nil, err
+	}
+	byKey := map[string]existingItem{}
+	seen := map[string]int{}
+	var order []string
+	for rows.Next() {
+		var it existingItem
+		var ref string
+		if err := rows.Scan(&it.id, &it.kind, &it.position, &it.payload, &ref); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		key := importKey(ref, seen)
+		byKey[key] = it
+		order = append(order, key)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	ids := make([]string, 0, len(byKey))
+	for _, it := range byKey {
+		ids = append(ids, it.id)
+	}
+	exByItem := map[string][]domain.Exercise{}
+	if len(ids) > 0 {
+		erows, err := tx.Query(ctx,
+			`SELECT id, lesson_item_id, type, prompt::text, answer_key::text, difficulty FROM exercises
+			  WHERE lesson_item_id::text = ANY($1::text[]) ORDER BY lesson_item_id, id`, ids)
+		if err != nil {
+			return nil, err
+		}
+		for erows.Next() {
+			var e domain.Exercise
+			var prompt, key []byte
+			if err := erows.Scan(&e.ID, &e.LessonItemID, &e.Type, &prompt, &key, &e.Difficulty); err != nil {
+				erows.Close()
+				return nil, err
+			}
+			e.Prompt, e.AnswerKey = prompt, key
+			exByItem[e.LessonItemID] = append(exByItem[e.LessonItemID], e)
+		}
+		erows.Close()
+		if err := erows.Err(); err != nil {
+			return nil, err
+		}
+	}
+
+	// Imported items move out of the way of the (lesson_id, position) unique
+	// key; hand-authored ones keep their positions and stay first.
+	if _, err := tx.Exec(ctx, `UPDATE lesson_items SET position = position + 100000 WHERE lesson_id=$1 AND source_ref IS NOT NULL`, lessonID); err != nil {
 		return nil, err
 	}
 	var base int
-	if err := tx.QueryRow(ctx, `SELECT COALESCE(max(position),0) FROM lesson_items WHERE lesson_id=$1`, lessonID).Scan(&base); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT COALESCE(max(position),0) FROM lesson_items WHERE lesson_id=$1 AND source_ref IS NULL`, lessonID).Scan(&base); err != nil {
 		return nil, err
 	}
 
-	out := make([]domain.LessonItem, len(items))
+	res := &domain.ImportedItemsResult{Items: make([]domain.LessonItem, len(items))}
+	matched := map[string]bool{}
+	seen = map[string]int{}
 	batch := &pgx.Batch{}
-	for i, it := range items {
-		out[i] = domain.LessonItem{LessonID: lessonID, Position: base + i + 1, Kind: it.Kind, Payload: it.Payload, SourceRef: it.SourceRef}
-		batch.Queue(`INSERT INTO lesson_items (lesson_id, position, kind, payload, source_ref)
-		             VALUES ($1, $2, $3, COALESCE($4,'{}')::jsonb, $5) RETURNING id`,
-			lessonID, out[i].Position, it.Kind, []byte(it.Payload), it.SourceRef)
-	}
-	res := tx.SendBatch(ctx, batch)
-	for i := range out {
-		if err := res.QueryRow().Scan(&out[i].ID); err != nil {
-			res.Close()
-			return nil, err
+	type pending struct{ index int }
+	var inserts []pending
+	for i, in := range items {
+		pos := base + i + 1
+		payload := in.Payload
+		if len(payload) == 0 {
+			payload = []byte(`{}`)
+		}
+		out := domain.LessonItem{LessonID: lessonID, Position: pos, Kind: in.Kind, Payload: payload, SourceRef: in.SourceRef}
+		key := importKey(in.SourceRef, seen)
+		old, ok := byKey[key]
+		if !ok {
+			inserts = append(inserts, pending{i})
+			res.Items[i] = out
+			continue
+		}
+		matched[key] = true
+		out.ID = old.id
+		res.Items[i] = out
+		changed := old.kind != in.Kind || old.position != pos || !sameJSON(old.payload, payload)
+		batch.Queue(`UPDATE lesson_items SET kind=$2, payload=COALESCE($3,'{}')::jsonb, position=$4 WHERE id=$1`,
+			old.id, in.Kind, []byte(payload), pos)
+		olds := exByItem[old.id]
+		for j, e := range in.Exercises {
+			if j < len(olds) {
+				o := olds[j]
+				if o.Type != e.Type || o.Difficulty != e.Difficulty || !sameJSON(o.Prompt, e.Prompt) || !sameJSON(o.AnswerKey, e.AnswerKey) {
+					changed = true
+					batch.Queue(`UPDATE exercises SET type=$2, prompt=$3, answer_key=$4, difficulty=$5 WHERE id=$1`,
+						o.ID, e.Type, []byte(e.Prompt), []byte(e.AnswerKey), e.Difficulty)
+				}
+				continue
+			}
+			changed = true
+			batch.Queue(`INSERT INTO exercises (lesson_item_id, type, prompt, answer_key, difficulty) VALUES ($1,$2,$3,$4,$5)`,
+				old.id, e.Type, []byte(e.Prompt), []byte(e.AnswerKey), e.Difficulty)
+		}
+		for _, o := range olds[min(len(in.Exercises), len(olds)):] {
+			changed = true
+			batch.Queue(`DELETE FROM exercises WHERE id=$1`, o.ID)
+		}
+		if changed {
+			res.Updated++
+		} else {
+			res.Unchanged++
 		}
 	}
-	if err := res.Close(); err != nil {
-		return nil, err
+	for _, key := range order {
+		if !matched[key] {
+			batch.Queue(`DELETE FROM lesson_items WHERE id=$1`, byKey[key].id)
+			res.Removed++
+		}
+	}
+	if batch.Len() > 0 {
+		if err := tx.SendBatch(ctx, batch).Close(); err != nil {
+			return nil, err
+		}
 	}
 
-	exBatch := &pgx.Batch{}
-	for i, it := range items {
-		for _, e := range it.Exercises {
-			exBatch.Queue(`INSERT INTO exercises (lesson_item_id, type, prompt, answer_key, difficulty) VALUES ($1,$2,$3,$4,$5)`,
-				out[i].ID, e.Type, []byte(e.Prompt), []byte(e.AnswerKey), e.Difficulty)
+	// New items: one round trip for the items, one for their exercises.
+	if len(inserts) > 0 {
+		ib := &pgx.Batch{}
+		for _, p := range inserts {
+			it := res.Items[p.index]
+			ib.Queue(`INSERT INTO lesson_items (lesson_id, position, kind, payload, source_ref)
+			          VALUES ($1, $2, $3, COALESCE($4,'{}')::jsonb, $5) RETURNING id`,
+				lessonID, it.Position, it.Kind, []byte(it.Payload), it.SourceRef)
 		}
-	}
-	if exBatch.Len() > 0 {
-		if err := tx.SendBatch(ctx, exBatch).Close(); err != nil {
+		br := tx.SendBatch(ctx, ib)
+		for _, p := range inserts {
+			if err := br.QueryRow().Scan(&res.Items[p.index].ID); err != nil {
+				br.Close()
+				return nil, err
+			}
+		}
+		if err := br.Close(); err != nil {
 			return nil, err
 		}
+		eb := &pgx.Batch{}
+		for _, p := range inserts {
+			for _, e := range items[p.index].Exercises {
+				eb.Queue(`INSERT INTO exercises (lesson_item_id, type, prompt, answer_key, difficulty) VALUES ($1,$2,$3,$4,$5)`,
+					res.Items[p.index].ID, e.Type, []byte(e.Prompt), []byte(e.AnswerKey), e.Difficulty)
+			}
+		}
+		if eb.Len() > 0 {
+			if err := tx.SendBatch(ctx, eb).Close(); err != nil {
+				return nil, err
+			}
+		}
+		res.Created = len(inserts)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
-	return out, nil
+	return res, nil
 }
 
 func (r *PostgresCourseRepo) ReorderItems(ctx context.Context, lessonID string, orderedIDs []string) error {
@@ -429,7 +620,7 @@ func (r *PostgresCourseRepo) ReorderItems(ctx context.Context, lessonID string, 
 
 func (r *PostgresCourseRepo) Units(ctx context.Context, courseID string) ([]domain.Unit, error) {
 	rows, err := r.pool.Query(ctx,
-		`SELECT id, course_id, position, title, COALESCE(description,'')
+		`SELECT id, course_id, position, title, COALESCE(description,''), COALESCE(source_id,'')
 		   FROM units WHERE course_id=$1 ORDER BY position`, courseID)
 	if err != nil {
 		return nil, err
@@ -438,7 +629,7 @@ func (r *PostgresCourseRepo) Units(ctx context.Context, courseID string) ([]doma
 	var out []domain.Unit
 	for rows.Next() {
 		var u domain.Unit
-		if err := rows.Scan(&u.ID, &u.CourseID, &u.Position, &u.Title, &u.Description); err != nil {
+		if err := rows.Scan(&u.ID, &u.CourseID, &u.Position, &u.Title, &u.Description, &u.SourceID); err != nil {
 			return nil, err
 		}
 		out = append(out, u)
@@ -449,8 +640,8 @@ func (r *PostgresCourseRepo) Units(ctx context.Context, courseID string) ([]doma
 func (r *PostgresCourseRepo) Unit(ctx context.Context, unitID string) (*domain.Unit, error) {
 	var u domain.Unit
 	err := r.pool.QueryRow(ctx,
-		`SELECT id, course_id, position, title, COALESCE(description,'') FROM units WHERE id=$1`, unitID).
-		Scan(&u.ID, &u.CourseID, &u.Position, &u.Title, &u.Description)
+		`SELECT id, course_id, position, title, COALESCE(description,''), COALESCE(source_id,'') FROM units WHERE id=$1`, unitID).
+		Scan(&u.ID, &u.CourseID, &u.Position, &u.Title, &u.Description, &u.SourceID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrUnitNotFound
 	}
@@ -462,10 +653,45 @@ func (r *PostgresCourseRepo) Unit(ctx context.Context, unitID string) (*domain.U
 
 func (r *PostgresCourseRepo) CreateUnit(ctx context.Context, u *domain.Unit) error {
 	return r.pool.QueryRow(ctx,
-		`INSERT INTO units (course_id, position, title, description)
-		 VALUES ($1, COALESCE(NULLIF($2,0), (SELECT COALESCE(max(position),0)+1 FROM units WHERE course_id=$1)), $3, NULLIF($4,''))
+		`INSERT INTO units (course_id, position, title, description, source_id)
+		 VALUES ($1, COALESCE(NULLIF($2,0), (SELECT COALESCE(max(position),0)+1 FROM units WHERE course_id=$1)), $3, NULLIF($4,''), NULLIF($5,''))
 		 RETURNING id, position`,
-		u.CourseID, u.Position, u.Title, u.Description).Scan(&u.ID, &u.Position)
+		u.CourseID, u.Position, u.Title, u.Description, u.SourceID).Scan(&u.ID, &u.Position)
+}
+
+// SetUnitSourceID records the external chapter a unit was imported from (used
+// when a re-import adopts a unit an older importer created by title).
+func (r *PostgresCourseRepo) SetUnitSourceID(ctx context.Context, unitID, sourceID string) error {
+	tag, err := r.pool.Exec(ctx, `UPDATE units SET source_id = NULLIF($2,'') WHERE id=$1`, unitID, sourceID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrUnitNotFound
+	}
+	return nil
+}
+
+// LessonsBySourceID finds a course's lessons imported from one external lesson
+// (normally zero or one; more only if an older importer duplicated it).
+func (r *PostgresCourseRepo) LessonsBySourceID(ctx context.Context, courseID, sourceID string) ([]domain.Lesson, error) {
+	rows, err := r.pool.Query(ctx,
+		`SELECT l.id, l.course_id, COALESCE(l.unit_id::text,''), l.position, l.title, l.version, COALESCE(l.cover_url,''), COALESCE(l.focus,''), COALESCE(l.objective,'{}'), COALESCE(l.source_id,'')
+		   FROM lessons l LEFT JOIN units u ON u.id = l.unit_id
+		  WHERE l.course_id=$1 AND l.source_id=$2 ORDER BY COALESCE(u.position, 0), l.position`, courseID, sourceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.Lesson
+	for rows.Next() {
+		var l domain.Lesson
+		if err := rows.Scan(&l.ID, &l.CourseID, &l.UnitID, &l.Position, &l.Title, &l.Version, &l.CoverURL, &l.Focus, &l.Objective, &l.SourceID); err != nil {
+			return nil, err
+		}
+		out = append(out, l)
+	}
+	return out, rows.Err()
 }
 
 func (r *PostgresCourseRepo) LessonsByUnit(ctx context.Context, unitID string) ([]domain.Lesson, error) {
@@ -531,7 +757,7 @@ func (r *PostgresCourseRepo) SearchCourses(ctx context.Context, q string, limit,
 		return nil, 0, err
 	}
 	rows, err := r.pool.Query(ctx,
-		`SELECT id, language, cefr_level, title, coalesce(description,''), coalesce(image_url,''), version, published
+		`SELECT id, language, cefr_level, title, coalesce(description,''), coalesce(image_url,''), version, published, coalesce(source_id,'')
 		   FROM courses WHERE ($1='' OR title ILIKE '%'||$1||'%')
 		   ORDER BY language, cefr_level, title LIMIT $2 OFFSET $3`, q, limit, offset)
 	if err != nil {
@@ -541,7 +767,7 @@ func (r *PostgresCourseRepo) SearchCourses(ctx context.Context, q string, limit,
 	var out []domain.Course
 	for rows.Next() {
 		var c domain.Course
-		if err := rows.Scan(&c.ID, &c.Language, &c.CEFR, &c.Title, &c.Description, &c.ImageURL, &c.Version, &c.Published); err != nil {
+		if err := rows.Scan(&c.ID, &c.Language, &c.CEFR, &c.Title, &c.Description, &c.ImageURL, &c.Version, &c.Published, &c.SourceID); err != nil {
 			return nil, 0, err
 		}
 		out = append(out, c)
@@ -591,4 +817,55 @@ func (r *PostgresCourseRepo) ListAccessRules(ctx context.Context) ([]domain.Acce
 		out = append(out, ar)
 	}
 	return out, rows.Err()
+}
+
+// --- localized content ---
+
+func (r *PostgresCourseRepo) ContentTranslations(ctx context.Context, hashes []string) ([]domain.ContentTranslation, error) {
+	if len(hashes) == 0 {
+		return nil, nil
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT source_hash, locale, source_lang, source_text, text, origin
+		   FROM content_translations WHERE source_hash = ANY($1::text[]) ORDER BY source_hash, locale`, hashes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.ContentTranslation
+	for rows.Next() {
+		var t domain.ContentTranslation
+		if err := rows.Scan(&t.SourceHash, &t.Locale, &t.SourceLang, &t.SourceText, &t.Text, &t.Origin); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// UpsertContentTranslations writes translations in one transaction.
+func (r *PostgresCourseRepo) UpsertContentTranslations(ctx context.Context, ts []domain.ContentTranslation) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	b := &pgx.Batch{}
+	for _, t := range ts {
+		b.Queue(`INSERT INTO content_translations (source_hash, locale, source_lang, source_text, text, origin, updated_at)
+		         VALUES ($1,$2,$3,$4,$5,$6, now())
+		         ON CONFLICT (source_hash, locale) DO UPDATE
+		            SET text=EXCLUDED.text, origin=EXCLUDED.origin, source_lang=EXCLUDED.source_lang,
+		                source_text=EXCLUDED.source_text, updated_at=now()`,
+			t.SourceHash, t.Locale, t.SourceLang, t.SourceText, t.Text, t.Origin)
+	}
+	if err := tx.SendBatch(ctx, b).Close(); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (r *PostgresCourseRepo) DeleteContentTranslation(ctx context.Context, sourceHash, locale string) error {
+	_, err := r.pool.Exec(ctx, `DELETE FROM content_translations WHERE source_hash=$1 AND locale=$2`, sourceHash, locale)
+	return err
 }

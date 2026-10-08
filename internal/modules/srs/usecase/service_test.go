@@ -290,3 +290,50 @@ func TestAddCardKeepsAndBorrowsMeaning(t *testing.T) {
 		t.Fatalf("blank re-save erased meaning: %+v", cards[0].Meaning)
 	}
 }
+
+// A graduated card reviewed before it is due changes nothing and earns no XP;
+// a due review earns XP once, and re-reviewing a state restored by Undo does
+// not earn it again.
+func TestEarlyReviewAndUndoDoNotFarmXP(t *testing.T) {
+	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	r := repo.NewMemorySRSRepo()
+	rw := &xpCounter{}
+	svc := NewService(r, rw, func() time.Time { return now })
+	ctx := context.Background()
+	c, err := svc.AddCard(ctx, "u1", AddInput{Language: "en", Lemma: "early", Meaning: map[string]string{"fa": "x"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Review(ctx, "u1", c.ID, domain.GradeGood); err != nil || rw.xp != 2 {
+		t.Fatalf("due review: xp=%d err=%v", rw.xp, err)
+	}
+	after, _ := r.Card(ctx, "u1", c.ID)
+	for i := 0; i < 3; i++ {
+		got, err := svc.Review(ctx, "u1", c.ID, domain.GradeEasy)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !got.DueAt.Equal(after.DueAt) || got.IntervalDays != after.IntervalDays {
+			t.Fatal("an early review must not advance the schedule")
+		}
+	}
+	if rw.xp != 2 {
+		t.Fatalf("early reviews must not earn XP, xp=%d", rw.xp)
+	}
+	if _, err := svc.Undo(ctx, "u1", c.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Review(ctx, "u1", c.ID, domain.GradeGood); err != nil {
+		t.Fatal(err)
+	}
+	if rw.xp != 2 {
+		t.Fatalf("review -> undo -> review must not earn XP twice, xp=%d", rw.xp)
+	}
+}
+
+type xpCounter struct{ xp int }
+
+func (x *xpCounter) Award(_ context.Context, _ string, xp int, _ string) error {
+	x.xp += xp
+	return nil
+}

@@ -14,6 +14,11 @@ type CourseRepository interface {
 	Exercises(ctx context.Context, itemID string) ([]Exercise, error)
 	Exercise(ctx context.Context, id string) (*Exercise, error)
 	LessonCount(ctx context.Context, courseID string) (int, error)
+	// ExerciseLessonID returns the lesson an exercise belongs to.
+	ExerciseLessonID(ctx context.Context, exerciseID string) (string, error)
+	// LessonItemCounts returns the item count of every lesson in a course
+	// (lessons without items included, with 0).
+	LessonItemCounts(ctx context.Context, courseID string) (map[string]int, error)
 	UpdateItem(ctx context.Context, it *LessonItem) error
 	DeleteItem(ctx context.Context, itemID string) error
 	ReorderItems(ctx context.Context, lessonID string, orderedIDs []string) error
@@ -30,6 +35,9 @@ type CourseRepository interface {
 	SetAccessRule(ctx context.Context, rule AccessRule) error
 	DeleteAccessRule(ctx context.Context, entityType, entityID string) error
 	ListAccessRules(ctx context.Context) ([]AccessRule, error)
+	// ContentTranslations returns every stored translation of the given source
+	// hashes (all locales).
+	ContentTranslations(ctx context.Context, hashes []string) ([]ContentTranslation, error)
 }
 
 // ProgressRepository records and summarizes user learning events.
@@ -42,4 +50,7 @@ type ProgressRepository interface {
 	// ExerciseAttempts counts how many times the user has already attempted this
 	// exercise. Used to award XP only on a first-attempt-correct answer.
 	ExerciseAttempts(ctx context.Context, userID, exerciseID string) (int, error)
+	// AttemptedExercises reports which of the given exercises the user has
+	// answered at least once (server-side lesson completion criteria).
+	AttemptedExercises(ctx context.Context, userID string, exerciseIDs []string) (map[string]bool, error)
 }
