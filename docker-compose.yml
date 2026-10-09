@@ -4,7 +4,9 @@
 # never bootstraps an admin with the default password, and disables the
 # simulated payment stub (set PAYMENT_PROVIDER=zarinpal + ZARINPAL_MERCHANT_ID
 # to sell subscriptions). The database and cache listen on localhost only.
-name: leksuu-backend
+# A second copy (staging) sets COMPOSE_PROJECT_NAME and the *_PORT values in
+# its own .env so its containers, volumes and ports never touch production.
+name: ${COMPOSE_PROJECT_NAME:-leksuu-backend}
 
 services:
   db:
@@ -13,7 +15,7 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: leksuu
-    ports: ["127.0.0.1:5432:5432"]
+    ports: ["127.0.0.1:${DB_PORT:-5432}:5432"]
     volumes: ["pgdata:/var/lib/postgresql/data"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d leksuu"]
@@ -23,7 +25,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    ports: ["127.0.0.1:6379:6379"]
+    ports: ["127.0.0.1:${REDIS_PORT:-6379}:6379"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -79,7 +81,7 @@ services:
       # Default false: the bucket stays private and the API streams its bytes at
       # /media/<key>. Set true only for a bucket that allows anonymous reads.
       S3_PUBLIC_READ: "${S3_PUBLIC_READ:-false}"
-    ports: ["8080:8080"]
+    ports: ["${API_PORT:-8080}:8080"]
     volumes: ["mediadata:/data/media"]
     depends_on:
       db:

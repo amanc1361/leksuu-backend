@@ -1,4 +1,4 @@
-# Deploy to the VPS on every push to main.
+# Deploy to the VPS: push to main → production, push to staging → staging.
 #
 # The image is built ON THE SERVER (as before): the npm lockfile resolves through
 # the liara mirror and Go modules may need an Iranian proxy, both of which work
@@ -15,18 +15,23 @@
 #   VPS_KNOWN_HOSTS   output of `ssh-keyscan -H <host>`      (optional, recommended)
 #   DEPLOY_COMMAND    how to rebuild and restart             (optional, default: docker compose up -d --build)
 #   HEALTHCHECK_URL   URL checked from the VPS after deploy  (optional, default: http://127.0.0.1:8080/healthz)
-# Until the required secrets exist, runs are skipped with a warning.
+# Staging (a separate copy on the same VPS, own folder/.env/database) uses the
+# same VPS_* secrets plus its own:
+#   STAGING_DEPLOY_PATH       path of the staging clone (must differ from DEPLOY_PATH)
+#   STAGING_DEPLOY_COMMAND    (optional, default: docker compose -p leksuu-staging up -d --build)
+#   STAGING_HEALTHCHECK_URL   (optional, default: http://127.0.0.1:8081/healthz)
+# Until the required secrets for a target exist, its runs are skipped with a warning.
 
 name: Deploy to VPS
 
 on:
   push:
-    branches: [main]
+    branches: [main, staging]
   workflow_dispatch:
 
-# One deploy at a time; a newer push waits for the running one to finish.
+# One deploy at a time per target; a newer push waits for the running one.
 concurrency:
-  group: deploy-production
+  group: deploy-${{ github.ref_name }}
   cancel-in-progress: false
 
 permissions:
@@ -42,21 +47,42 @@ jobs:
       VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
       VPS_PORT: ${{ secrets.VPS_PORT }}
       VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
-      DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
-      DEPLOY_COMMAND: ${{ secrets.DEPLOY_COMMAND }}
-      HEALTHCHECK_URL: ${{ secrets.HEALTHCHECK_URL }}
+      PROD_DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+      PROD_DEPLOY_COMMAND: ${{ secrets.DEPLOY_COMMAND }}
+      PROD_HEALTHCHECK_URL: ${{ secrets.HEALTHCHECK_URL }}
+      STAGING_DEPLOY_PATH: ${{ secrets.STAGING_DEPLOY_PATH }}
+      STAGING_DEPLOY_COMMAND: ${{ secrets.STAGING_DEPLOY_COMMAND }}
+      STAGING_HEALTHCHECK_URL: ${{ secrets.STAGING_HEALTHCHECK_URL }}
     steps:
       - name: Check deploy settings
         id: cfg
         run: |
+          if [ "$GITHUB_REF_NAME" = "main" ]; then
+            target=production; prefix=""
+            path="$PROD_DEPLOY_PATH"; cmd="${PROD_DEPLOY_COMMAND:-docker compose up -d --build}"; hc="${PROD_HEALTHCHECK_URL:-http://127.0.0.1:8080/healthz}"
+          else
+            target=staging; prefix="STAGING_"
+            path="$STAGING_DEPLOY_PATH"; cmd="${STAGING_DEPLOY_COMMAND:-docker compose -p leksuu-staging up -d --build}"; hc="${STAGING_HEALTHCHECK_URL:-http://127.0.0.1:8081/healthz}"
+          fi
+          # Delimiter form, so a multi-line command can't break the env file.
+          for kv in "DEPLOY_TARGET=$target" "DEPLOY_PATH=$path" "DEPLOY_COMMAND=$cmd" "HEALTHCHECK_URL=$hc"; do
+            printf '%s<<__DEPLOY_EOF__\n%s\n__DEPLOY_EOF__\n' "${kv%%=*}" "${kv#*=}"
+          done >> "$GITHUB_ENV"
           missing=""
-          for v in VPS_HOST VPS_USER VPS_SSH_KEY DEPLOY_PATH; do
+          for v in VPS_HOST VPS_USER VPS_SSH_KEY; do
             [ -n "${!v}" ] || missing="$missing $v"
           done
+          [ -n "$path" ] || missing="$missing ${prefix}DEPLOY_PATH"
+          # Never let a staging deploy write into the production folder.
+          if [ "$target" = staging ] && [ -n "$path" ] && [ "$path" = "$PROD_DEPLOY_PATH" ]; then
+            echo "::error::STAGING_DEPLOY_PATH is the same as DEPLOY_PATH; refusing to deploy staging over production."
+            exit 1
+          fi
           if [ -n "$missing" ]; then
-            echo "::warning::Deploy skipped. Add these repository secrets:$missing"
+            echo "::warning::$target deploy skipped. Add these repository secrets:$missing"
             echo "ready=false" >> "$GITHUB_OUTPUT"
           else
+            echo "Deploying to $target"
             echo "ready=true" >> "$GITHUB_OUTPUT"
           fi
 
@@ -80,13 +106,16 @@ jobs:
           FETCH_TOKEN: ${{ github.token }}
         run: |
           port="${VPS_PORT:-22}"
-          deploy_command="${DEPLOY_COMMAND:-docker compose up -d --build}"
-          healthcheck="${HEALTHCHECK_URL:-http://127.0.0.1:8080/healthz}"
+          # DEPLOY_COMMAND / HEALTHCHECK_URL come from $GITHUB_ENV ("Check deploy settings").
+          # shellcheck disable=SC2153
+          deploy_command="$DEPLOY_COMMAND"
+          healthcheck="$HEALTHCHECK_URL"
           auth="$(printf 'x-access-token:%s' "$FETCH_TOKEN" | base64 -w0)"
           # The remote script receives its inputs on stdin, never as arguments,
           # so the short-lived fetch token doesn't appear in the server's
           # process list, and it is passed as a header so git never stores it.
           {
+            printf 'TARGET=%q\n' "$DEPLOY_TARGET"
             printf 'DEPLOY_PATH=%q\n' "$DEPLOY_PATH"
             printf 'REPO=%q\n' "$GITHUB_REPOSITORY"
             printf 'SHA=%q\n' "$GITHUB_SHA"
@@ -97,7 +126,7 @@ jobs:
           set -euo pipefail
           cd "$DEPLOY_PATH" || { echo "DEPLOY_PATH does not exist on the server: $DEPLOY_PATH"; exit 1; }
           git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "$DEPLOY_PATH is not a git clone of $REPO"; exit 1; }
-          echo "Deploying $REPO @ ${SHA:0:7} in $DEPLOY_PATH"
+          echo "Deploying $REPO @ ${SHA:0:7} to $TARGET in $DEPLOY_PATH"
           git -c http.extraheader="AUTHORIZATION: basic $AUTH" fetch --quiet "https://github.com/$REPO.git" "$SHA"
           git reset --hard --quiet FETCH_HEAD   # tracked files only; .env and data stay
           echo "Now at: $(git log --oneline -1)"

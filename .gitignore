@@ -1,0 +1,4 @@
+# Environment files hold secrets (JWT, passwords, S3 keys); examples are committed.
+.env
+.env.*
+!.env.*.example
