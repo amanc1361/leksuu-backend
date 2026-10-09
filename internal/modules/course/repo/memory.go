@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/leksuu/platform/internal/modules/course/domain"
 	"github.com/leksuu/platform/internal/shared/id"
@@ -569,6 +570,9 @@ func (r *MemoryCourseRepo) UpdateLesson(_ context.Context, l *domain.Lesson) err
 			list[i].CoverURL = l.CoverURL
 			list[i].Focus = l.Focus
 			list[i].Objective = l.Objective
+			if l.Kind != "" { // same rule as Postgres: COALESCE(NULLIF(kind,''), kind)
+				list[i].Kind = l.Kind
+			}
 			return nil
 		}
 	}
@@ -688,6 +692,33 @@ func (r *MemoryProgressRepo) ExerciseAttempts(_ context.Context, userID, exercis
 
 // AttemptedExercises reports which of the given exercises the user has
 // answered at least once.
+// LatestExerciseScores returns the score of the most recent attempt per exercise.
+func (r *MemoryProgressRepo) LatestExerciseScores(_ context.Context, userID string, exerciseIDs []string) (map[string]float64, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	want := make(map[string]bool, len(exerciseIDs))
+	for _, id := range exerciseIDs {
+		want[id] = true
+	}
+	out := map[string]float64{}
+	latest := map[string]time.Time{}
+	for _, e := range r.entries {
+		if e.UserID != userID || e.EntityType != domain.EntityExercise || !want[e.EntityID] {
+			continue
+		}
+		if t, seen := latest[e.EntityID]; seen && e.OccurredAt.Before(t) {
+			continue
+		}
+		latest[e.EntityID] = e.OccurredAt
+		score := 0.0
+		if e.Score != nil {
+			score = *e.Score
+		}
+		out[e.EntityID] = score
+	}
+	return out, nil
+}
+
 func (r *MemoryProgressRepo) AttemptedExercises(_ context.Context, userID string, exerciseIDs []string) (map[string]bool, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

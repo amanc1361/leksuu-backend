@@ -211,6 +211,33 @@ func (r *PostgresProgressRepo) ExerciseAttempts(ctx context.Context, userID, exe
 
 // AttemptedExercises reports which of the given exercises the user has
 // answered at least once.
+// LatestExerciseScores returns the score of the user's most recent attempt at
+// each given exercise (used to grade a checkpoint on its latest run).
+func (r *PostgresProgressRepo) LatestExerciseScores(ctx context.Context, userID string, exerciseIDs []string) (map[string]float64, error) {
+	out := map[string]float64{}
+	if len(exerciseIDs) == 0 {
+		return out, nil
+	}
+	rows, err := r.pool.Query(ctx,
+		`SELECT DISTINCT ON (entity_id) entity_id::text, COALESCE(score, 0)
+		   FROM user_progress
+		  WHERE user_id=$1 AND entity_type='exercise' AND entity_id::text = ANY($2::text[])
+		  ORDER BY entity_id, occurred_at DESC`, userID, exerciseIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var score float64
+		if err := rows.Scan(&id, &score); err != nil {
+			return nil, err
+		}
+		out[id] = score
+	}
+	return out, rows.Err()
+}
+
 func (r *PostgresProgressRepo) AttemptedExercises(ctx context.Context, userID string, exerciseIDs []string) (map[string]bool, error) {
 	out := map[string]bool{}
 	if len(exerciseIDs) == 0 {

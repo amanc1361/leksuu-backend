@@ -53,4 +53,7 @@ type ProgressRepository interface {
 	// AttemptedExercises reports which of the given exercises the user has
 	// answered at least once (server-side lesson completion criteria).
 	AttemptedExercises(ctx context.Context, userID string, exerciseIDs []string) (map[string]bool, error)
+	// LatestExerciseScores returns, per exercise, the score (1 correct, 0 wrong)
+	// of the user's most recent attempt. Unattempted exercises are absent.
+	LatestExerciseScores(ctx context.Context, userID string, exerciseIDs []string) (map[string]float64, error)
 }

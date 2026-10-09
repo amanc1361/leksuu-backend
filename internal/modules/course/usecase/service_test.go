@@ -429,3 +429,84 @@ func TestSpeakUsesServerScore(t *testing.T) {
 		t.Fatalf("no recorded assessment: want ErrNoAssessment, got %v", err)
 	}
 }
+
+// A checkpoint completes only at 80% or better, scored on the latest attempt
+// at each of its questions; below that nothing is recorded or awarded, and a
+// retake that brings the score up passes it.
+func TestCheckpointNeedsEightyPercent(t *testing.T) {
+	ctx := context.Background()
+	courses := repo.NewMemoryCourseRepo()
+	rw := &countRewarder{}
+	s := usecase.NewService(courses, repo.NewMemoryProgressRepo(courses.LessonCourseID), rw, time.Now)
+	const cp = "lesson-empty-cp"
+	l, err := courses.Lesson(ctx, cp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.Kind = domain.LessonKindCheckpoint
+	if err := courses.UpdateLesson(ctx, l); err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for i := 0; i < 5; i++ {
+		it := &domain.LessonItem{LessonID: cp, Kind: domain.KindExercise}
+		if err := courses.CreateItem(ctx, it); err != nil {
+			t.Fatal(err)
+		}
+		ex := &domain.Exercise{LessonItemID: it.ID, Type: "mcq",
+			Prompt: json.RawMessage(`{"question":"q","options":["a","b"]}`), AnswerKey: json.RawMessage(`{"correct":0}`)}
+		if err := courses.CreateExercise(ctx, ex); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, ex.ID)
+	}
+	right, wrong := json.RawMessage(`{"choice":0}`), json.RawMessage(`{"choice":1}`)
+	answer := func(v usecase.Viewer, id string, a json.RawMessage) {
+		t.Helper()
+		if _, err := s.GradeExercise(ctx, v, id, a); err != nil {
+			t.Fatal(err)
+		}
+	}
+	completed := func(v usecase.Viewer) int {
+		sum, _ := s.CourseProgress(ctx, v.UserID, l.CourseID)
+		return sum.CompletedLessons
+	}
+
+	// 3/5 = 60%: not passed, nothing recorded, no lesson XP.
+	v := usecase.Viewer{UserID: "cp-1", Admin: true}
+	for i, id := range ids {
+		if i < 3 {
+			answer(v, id, right)
+		} else {
+			answer(v, id, wrong)
+		}
+	}
+	before := rw.awards
+	res, err := s.CompleteLesson(ctx, v, cp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Checkpoint || res.Passed || res.Score != 0.6 || res.AwardedXP || rw.awards != before || completed(v) != 0 {
+		t.Fatalf("60%% must not pass: %+v awards %d→%d completed=%d", res, before, rw.awards, completed(v))
+	}
+
+	// Retake: the two misses answered correctly → latest attempts give 100%.
+	answer(v, ids[3], right)
+	answer(v, ids[4], right)
+	res, err = s.CompleteLesson(ctx, v, cp)
+	if err != nil || !res.Passed || res.Score != 1 || !res.AwardedXP || completed(v) != 1 {
+		t.Fatalf("retake to 100%% must pass and award: %+v err=%v completed=%d", res, err, completed(v))
+	}
+
+	// Exactly 80% (4/5) passes; a correct answer later overwritten by a wrong
+	// one counts as wrong (latest attempt wins).
+	w := usecase.Viewer{UserID: "cp-2", Admin: true}
+	for _, id := range ids {
+		answer(w, id, right)
+	}
+	answer(w, ids[0], wrong)
+	res, err = s.CompleteLesson(ctx, w, cp)
+	if err != nil || !res.Passed || res.Score != 0.8 {
+		t.Fatalf("80%% must pass: %+v err=%v", res, err)
+	}
+}

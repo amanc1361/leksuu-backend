@@ -277,7 +277,16 @@ func (h *Handler) CompleteLesson(w http.ResponseWriter, r *http.Request) {
 		web.Error(w, r, err)
 		return
 	}
-	web.JSON(w, http.StatusOK, map[string]any{"status": domain.StatusCompleted, "awarded_xp": res.AwardedXP})
+	out := map[string]any{"status": domain.StatusCompleted, "awarded_xp": res.AwardedXP, "passed": res.Passed}
+	if res.Checkpoint {
+		out["checkpoint"] = true
+		out["score"] = res.Score
+		out["pass_score"] = usecase.CheckpointPassRatio
+		if !res.Passed {
+			out["status"] = "not_passed"
+		}
+	}
+	web.JSON(w, http.StatusOK, out)
 }
 
 func (h *Handler) AnswerExercise(w http.ResponseWriter, r *http.Request) {

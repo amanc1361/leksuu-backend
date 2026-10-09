@@ -419,7 +419,16 @@ func (s *Service) localizeItems(ctx context.Context, items []domain.LessonItem) 
 // CompletionResult is the outcome of completing a lesson.
 type CompletionResult struct {
 	AwardedXP bool // XP was granted (only for the first completion)
+	// Checkpoint results: a checkpoint completes only at CheckpointPassRatio
+	// or better, scored on the latest attempt at each of its questions.
+	Checkpoint bool
+	Passed     bool
+	Score      float64 // 0..1, checkpoints only
 }
+
+// CheckpointPassRatio is the share of a checkpoint's questions that must be
+// correct (on their latest attempt) for it to count as passed — Busuu's 80%.
+const CheckpointPassRatio = 0.8
 
 // CompleteLesson records a lesson completion. The server decides whether the
 // lesson counts as done: its course is published, the learner may open it (or
@@ -473,6 +482,25 @@ func (s *Service) CompleteLesson(ctx context.Context, v Viewer, lessonID string)
 			}
 		}
 	}
+	res := &CompletionResult{Passed: true}
+	if l.Kind == domain.LessonKindCheckpoint && len(required) > 0 {
+		scores, err := s.progress.LatestExerciseScores(ctx, v.UserID, required)
+		if err != nil {
+			return nil, err
+		}
+		correct := 0.0
+		for _, id := range required {
+			correct += scores[id]
+		}
+		res.Checkpoint = true
+		res.Score = correct / float64(len(required))
+		// Below the pass mark nothing is recorded and nothing is awarded; the
+		// learner retakes the checkpoint and the latest answers count.
+		if res.Score < CheckpointPassRatio {
+			res.Passed = false
+			return res, nil
+		}
+	}
 	already, err := s.completedLesson(ctx, v.UserID, l)
 	if err != nil {
 		return nil, err
@@ -486,7 +514,6 @@ func (s *Service) CompleteLesson(ctx context.Context, v Viewer, lessonID string)
 	}); err != nil {
 		return nil, err
 	}
-	res := &CompletionResult{}
 	if !already {
 		res.AwardedXP = s.rewardOnce(ctx, v.UserID, "lesson:"+lessonID, XPLessonComplete, "lesson_complete")
 	}
