@@ -238,3 +238,39 @@ func TestTeacherSeesOwnPrice(t *testing.T) {
 		t.Fatalf("zero price: want tutor.invalid_price, got %v", err)
 	}
 }
+
+type groupSrc []GroupSession
+
+func (g groupSrc) TutorGroupSessions(context.Context, string) ([]GroupSession, error) { return g, nil }
+func (g groupSrc) AllGroupSessions(context.Context) ([]GroupSession, error)           { return g, nil }
+func (g groupSrc) StudentGroupSessions(context.Context, string) ([]GroupSession, error) {
+	return nil, nil
+}
+
+type hourly int
+
+func (h hourly) TutorPayoutPerHourToman(context.Context) int { return int(h) }
+
+// A paid group class pays the teacher their share of the seats, not the
+// hourly rate; an unpriced (subscription) class still pays by the hour.
+func TestGroupClassEarningsUseSeatShare(t *testing.T) {
+	ctx := context.Background()
+	m := newMarket(t)
+	_ = m.svc.LinkUser(ctx, "tutor-sara", "sara-user")
+	m.svc.SetPayoutRate(hourly(60000))
+	m.svc.SetGroupSessions(groupSrc{
+		{DurationMin: 60, Completed: true, Priced: true, RevenueToman: 300000, TeacherEarnedToman: 210000},
+		{DurationMin: 60, Completed: true}, // old subscription class: hourly
+	})
+	rep, err := m.svc.EarningsReport(ctx, "sara-user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := 210000 + 60000; rep.EarningsToman != want || rep.SessionEarningsToman != 210000 {
+		t.Fatalf("earnings = %d (session %d), want %d", rep.EarningsToman, rep.SessionEarningsToman, want)
+	}
+	sum, _ := m.svc.TotalPayout(ctx)
+	if sum.PayoutToman != 270000 || sum.PlatformShareToman != 90000 || sum.SessionRevenueToman != 300000 {
+		t.Fatalf("payout summary = %+v", sum)
+	}
+}

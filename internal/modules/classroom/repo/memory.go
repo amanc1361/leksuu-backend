@@ -13,6 +13,7 @@ type MemoryClassRepo struct {
 	mu      sync.RWMutex
 	classes map[string]*domain.ClassSession
 	enroll  map[string]map[string]bool // classID -> set of studentID
+	market  *classMarket               // paid seats (market_memory.go)
 }
 
 func NewMemoryClassRepo() *MemoryClassRepo {

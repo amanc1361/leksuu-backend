@@ -37,6 +37,11 @@ type Service struct {
 	joinWindow  JoinWindow
 	sessions    SessionSource
 	clock       func() time.Time
+	// Paid seats (market.go).
+	market   domain.MarketStore
+	credits  Credits
+	payments ClassPayments
+	share    SharePercent
 }
 
 // ClassAccess gates group-class enrollment behind a class subscription (optional).
@@ -199,6 +204,11 @@ type ClassView struct {
 	Enrolled  int    `json:"enrolled"`
 	IsFull    bool   `json:"is_full"`
 	Joined    bool   `json:"joined"`
+	// PriceToman is the price per seat (0 = only old class subscriptions).
+	PriceToman int `json:"price_toman"`
+	// Paid seats not refunded (incl. late leavers) and the teacher's part.
+	RevenueToman       int `json:"revenue_toman,omitempty"`
+	TeacherEarnedToman int `json:"teacher_earned_toman,omitempty"`
 }
 
 type CreateInput struct {
@@ -207,6 +217,7 @@ type CreateInput struct {
 	StartUTC    time.Time
 	DurationMin int
 	Capacity    int
+	PriceToman  int // price per seat (required when seats are sold)
 }
 
 // Create schedules a new group class (tutors only).
@@ -230,6 +241,9 @@ func (s *Service) Create(ctx context.Context, tutorUserID string, in CreateInput
 	if in.DurationMin <= 0 {
 		in.DurationMin = 30
 	}
+	if s.market != nil && in.PriceToman <= 0 {
+		return nil, errClassPrice
+	}
 	if in.Capacity <= 0 {
 		in.Capacity = defaultCapacity
 	}
@@ -246,6 +260,11 @@ func (s *Service) Create(ctx context.Context, tutorUserID string, in CreateInput
 	c.RoomID = "class_" + c.ID
 	if err := s.repo.CreateClass(ctx, c); err != nil {
 		return nil, err
+	}
+	if s.market != nil && in.PriceToman > 0 {
+		if err := s.market.SetClassPrice(ctx, c.ID, in.PriceToman); err != nil {
+			return nil, err
+		}
 	}
 	return c, nil
 }
@@ -354,11 +373,11 @@ func (s *Service) toViews(ctx context.Context, cs []domain.ClassSession, viewerI
 	for _, c := range cs {
 		out = append(out, s.view(ctx, c, viewerID, names))
 	}
-	return out
+	return s.withMoney(ctx, out)
 }
 
-// Enroll adds a student to a class (must be future, not full, not already in).
-func (s *Service) Enroll(ctx context.Context, studentID, classID string) error {
+// enrollLegacy enrolls under the old class subscription (no charge per seat).
+func (s *Service) enrollLegacy(ctx context.Context, studentID, classID string) error {
 	c, err := s.repo.GetClass(ctx, classID)
 	if err != nil {
 		return err
@@ -390,8 +409,12 @@ func (s *Service) Enroll(ctx context.Context, studentID, classID string) error {
 	return nil
 }
 
-// Leave un-enrolls a student.
+// Leave un-enrolls a student. A paid seat left more than 24h before the class
+// is refunded as class credit; later, the teacher keeps their share.
 func (s *Service) Leave(ctx context.Context, studentID, classID string) error {
+	if err := s.refundSeat(ctx, studentID, classID); err != nil {
+		return err
+	}
 	return s.repo.Unenroll(ctx, classID, studentID)
 }
 

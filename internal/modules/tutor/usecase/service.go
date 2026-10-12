@@ -54,6 +54,10 @@ type GroupSession struct {
 	Title       string
 	Attendees   int
 	Completed   bool
+	// Paid seats: the class has a price; what was paid and the teacher's part.
+	Priced             bool
+	RevenueToman       int
+	TeacherEarnedToman int
 }
 
 // GroupSessionSource supplies group-class teaching sessions (optional).
@@ -999,6 +1003,10 @@ func (s *Service) EarningsReport(ctx context.Context, userID string) (*EarningsR
 					rep.CompletedSessions++
 					rep.GroupCompleted++
 					rep.TaughtMinutes += g.DurationMin
+					if g.Priced { // paid per seat, not by the hour
+						rep.SessionEarningsToman += g.TeacherEarnedToman
+						pricedMinutes += g.DurationMin
+					}
 				} else {
 					rep.UpcomingSessions++
 					rep.GroupUpcoming++
@@ -1062,6 +1070,7 @@ func (s *Service) TotalPayout(ctx context.Context) (*PayoutSummary, error) {
 		}
 	}
 	hourlyPrivate := 0
+	pricedGroupMinutes := 0 // group classes paid per seat
 	for _, b := range bookings {
 		if p, ok := prices[b.ID]; ok {
 			if earned, counts := sessionEarning(b, p, now); counts {
@@ -1082,14 +1091,22 @@ func (s *Service) TotalPayout(ctx context.Context) (*PayoutSummary, error) {
 	if s.groupSess != nil {
 		if gs, err := s.groupSess.AllGroupSessions(ctx); err == nil {
 			for _, g := range gs {
+				if g.Completed && g.Priced {
+					sum.SessionRevenueToman += g.RevenueToman
+					sum.SessionPayoutToman += g.TeacherEarnedToman
+					sum.PlatformShareToman += g.RevenueToman - g.TeacherEarnedToman
+				}
 				if g.Completed {
 					sum.GroupMinutes += g.DurationMin
+					if g.Priced {
+						pricedGroupMinutes += g.DurationMin
+					}
 				}
 			}
 		}
 	}
 	sum.TaughtMinutes = sum.PrivateMinutes + sum.GroupMinutes
-	sum.PayoutToman = (hourlyPrivate+sum.GroupMinutes)*rate/60 + sum.SessionPayoutToman
+	sum.PayoutToman = (hourlyPrivate+sum.GroupMinutes-pricedGroupMinutes)*rate/60 + sum.SessionPayoutToman
 	return sum, nil
 }
 

@@ -122,6 +122,31 @@ var catalog = map[string]map[string]string{
 		LocaleFa:  "کلاس‌های آنلاین حالا جلسه‌ای پرداخت می‌شوند — معلم را انتخاب کن و جلسه رزرو کن.",
 		LocaleCkb: "پۆلە ئۆنلاینەکان ئێستا بە دانیشتن پارە دەدرێن — مامۆستا هەڵبژێرە و دانیشتن بگرە.",
 	},
+	"classroom.payment_required": {
+		LocaleEn:  "Pay for a seat to join this class.",
+		LocaleFa:  "برای ثبت‌نام در این کلاس باید هزینه‌ی آن را پرداخت کنی.",
+		LocaleCkb: "بۆ بەشداربوون لەم پۆلە دەبێت تێچووەکەی بدەیت.",
+	},
+	"classroom.price_not_set": {
+		LocaleEn:  "This class has no price yet.",
+		LocaleFa:  "این کلاس هنوز قیمت ندارد.",
+		LocaleCkb: "ئەم پۆلە هێشتا نرخی نییە.",
+	},
+	"classroom.invalid_price": {
+		LocaleEn:  "Set a price per seat greater than zero.",
+		LocaleFa:  "قیمتِ هر نفر را بیشتر از صفر تعیین کن.",
+		LocaleCkb: "نرخی هەر کەسێک لە سفر زیاتر دابنێ.",
+	},
+	"classroom.payments_unavailable": {
+		LocaleEn:  "Paying for classes isn't available right now.",
+		LocaleFa:  "پرداختِ کلاس در حالِ حاضر در دسترس نیست.",
+		LocaleCkb: "پارەدان بۆ پۆل ئێستا بەردەست نییە.",
+	},
+	"classroom.checkout_not_found": {
+		LocaleEn:  "Payment not found.",
+		LocaleFa:  "پرداخت پیدا نشد.",
+		LocaleCkb: "پارەدانەکە نەدۆزرایەوە.",
+	},
 	"tutor.payment_required": {
 		LocaleEn:  "Pay for this session to book it.",
 		LocaleFa:  "برای رزروِ این جلسه باید هزینه‌اش را پرداخت کنی.",

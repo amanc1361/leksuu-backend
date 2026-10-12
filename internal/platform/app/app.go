@@ -6,6 +6,7 @@ package app
 import (
 	"context"
 	"errors"
+	classroomdomain "github.com/leksuu/platform/internal/modules/classroom/domain"
 	tutordomain "github.com/leksuu/platform/internal/modules/tutor/domain"
 	"log/slog"
 	"net/http"
@@ -261,6 +262,14 @@ func New(cfg config.Config) (*App, error) {
 		Users:  authModule.Service(),
 		Clock:  time.Now,
 	})
+	// Group classes are sold per seat the same way (credit shared with 1:1).
+	if m, ok := repos.classroom.(classroomdomain.MarketStore); ok {
+		classroomModule.Service().SetMarket(m)
+	}
+	classroomModule.Service().SetCredits(tutorModule.Service())
+	classroomModule.Service().SetPayments(billingModule.Service())
+	classroomModule.Service().SetShare(settingsModule.Service())
+	billingModule.Service().SetFulfiller("group_class", classroomModule.Service())
 	classroomModule.Service().SetNotifier(notifModule.Service())
 	classroomModule.Service().SetClassAccess(billingModule.Service())
 	classroomModule.Service().SetJoinWindow(settingsModule.Service())
@@ -558,6 +567,7 @@ func groupViewsToSessions(views []classroomusecase.ClassView) []tutorusecase.Gro
 		out = append(out, tutorusecase.GroupSession{
 			StartUTC: v.StartUTC, DurationMin: v.DurationMin, Title: v.Title,
 			Attendees: v.Enrolled, Completed: v.EndUTC().Before(now),
+			Priced: v.PriceToman > 0, RevenueToman: v.RevenueToman, TeacherEarnedToman: v.TeacherEarnedToman,
 		})
 	}
 	return out

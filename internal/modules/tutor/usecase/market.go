@@ -330,3 +330,27 @@ func (s *Service) MyTutorProfile(ctx context.Context, userID string) (*domain.Tu
 	withPrice := s.withPrices(ctx, []domain.Tutor{*t})[0]
 	return &withPrice, nil
 }
+
+// ChargeCredit takes a price from a learner's class credit (shared by 1:1
+// sessions and group classes); false when the balance doesn't cover it.
+func (s *Service) ChargeCredit(ctx context.Context, learnerID string, amount int, reason, ref string) (bool, error) {
+	if s.market == nil {
+		return false, nil
+	}
+	if _, err := s.market.AdjustCredit(ctx, learnerID, -amount, reason, ref); err != nil {
+		if errors.Is(err, domain.ErrInsufficientCredit) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+// RefundCredit adds an amount back to a learner's class credit.
+func (s *Service) RefundCredit(ctx context.Context, learnerID string, amount int, reason, ref string) error {
+	if s.market == nil {
+		return errNoPayments
+	}
+	_, err := s.market.AdjustCredit(ctx, learnerID, amount, reason, ref)
+	return err
+}

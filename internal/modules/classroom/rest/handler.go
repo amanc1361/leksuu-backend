@@ -26,6 +26,7 @@ func (h *Handler) Mount(mux *http.ServeMux, prefix string, guard Guard) {
 	mux.Handle("GET "+prefix+"/tutor/group-classes", guard.Require(http.HandlerFunc(h.TutorClasses)))
 	mux.Handle("GET "+prefix+"/group-classes", guard.Require(http.HandlerFunc(h.Browse)))
 	mux.Handle("GET "+prefix+"/my/group-classes", guard.Require(http.HandlerFunc(h.MyClasses)))
+	mux.Handle("POST "+prefix+"/group-classes/{id}/checkout", guard.Require(http.HandlerFunc(h.CheckoutSeat)))
 	mux.Handle("POST "+prefix+"/group-classes/{id}/enroll", guard.Require(http.HandlerFunc(h.Enroll)))
 	mux.Handle("POST "+prefix+"/group-classes/{id}/leave", guard.Require(http.HandlerFunc(h.Leave)))
 	mux.Handle("GET "+prefix+"/group-classes/{id}/room", guard.Require(http.HandlerFunc(h.Room)))
@@ -49,6 +50,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		StartUTC    time.Time `json:"start_utc"`
 		DurationMin int       `json:"duration_min"`
 		Capacity    int       `json:"capacity"`
+		PriceToman  int       `json:"price_toman"`
 	}
 	if json.NewDecoder(r.Body).Decode(&in) != nil {
 		web.Error(w, r, apperr.ErrBadRequest)
@@ -56,7 +58,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	c, err := h.svc.Create(r.Context(), uid, usecase.CreateInput{
 		Title: in.Title, Description: in.Description, StartUTC: in.StartUTC,
-		DurationMin: in.DurationMin, Capacity: in.Capacity,
+		DurationMin: in.DurationMin, Capacity: in.Capacity, PriceToman: in.PriceToman,
 	})
 	if err != nil {
 		web.Error(w, r, err)
@@ -152,4 +154,19 @@ func (h *Handler) ClassStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	web.JSON(w, http.StatusOK, stats)
+}
+
+// CheckoutSeat holds a seat in a paid class and returns the gateway URL.
+func (h *Handler) CheckoutSeat(w http.ResponseWriter, r *http.Request) {
+	p, ok := authn.FromContext(r.Context())
+	if !ok {
+		web.Error(w, r, apperr.ErrInternal)
+		return
+	}
+	url, err := h.svc.CheckoutSeat(r.Context(), p.Subject, r.PathValue("id"))
+	if err != nil {
+		web.Error(w, r, err)
+		return
+	}
+	web.JSON(w, http.StatusOK, map[string]any{"pay_url": url})
 }

@@ -44,14 +44,15 @@ type Config struct {
 }
 
 type Service struct {
-	sessions SessionFulfiller // online-class sessions bought per class
-	repo     domain.Repository
-	provider PaymentProvider
-	wallet   Wallet
-	cfg      Config
-	settings SettingsProvider
-	access   AccessResolver
-	now      func() time.Time
+	// one-off purchases settled by other modules, by product
+	fulfillers map[string]SessionFulfiller
+	repo       domain.Repository
+	provider   PaymentProvider
+	wallet     Wallet
+	cfg        Config
+	settings   SettingsProvider
+	access     AccessResolver
+	now        func() time.Time
 }
 
 // Pricing is the live course-subscription pricing billing reads from settings.
@@ -310,26 +311,48 @@ func (s *Service) Subscribe(ctx context.Context, userID, product, period string)
 	return payURL, nil
 }
 
-// ProductSession marks a payment for one online-class session.
-const ProductSession = "session"
+// One-off products settled by other modules: a 1:1 session (tutor) and a
+// seat in a group class (classroom).
+const (
+	ProductSession    = "session"
+	ProductGroupClass = "group_class"
+)
 
 // SessionFulfiller settles a session checkout once its payment resolves.
 type SessionFulfiller interface {
 	FulfillCheckout(ctx context.Context, checkoutID string, paid bool) error
 }
 
-// SetSessionFulfiller wires the tutor module (sessions bought per class).
-func (s *Service) SetSessionFulfiller(f SessionFulfiller) { s.sessions = f }
+// SetSessionFulfiller wires the tutor module (1:1 sessions).
+func (s *Service) SetSessionFulfiller(f SessionFulfiller) { s.SetFulfiller(ProductSession, f) }
 
-// StartSessionPayment opens a gateway payment for a session checkout; the
-// payment row keeps the checkout id so the callback can settle it.
+// SetFulfiller wires the module that settles payments for a one-off product.
+func (s *Service) SetFulfiller(product string, f SessionFulfiller) {
+	if s.fulfillers == nil {
+		s.fulfillers = map[string]SessionFulfiller{}
+	}
+	s.fulfillers[product] = f
+}
+
+// StartSessionPayment opens a gateway payment for a 1:1 session checkout.
 func (s *Service) StartSessionPayment(ctx context.Context, userID, checkoutID string, amountToman int, desc string) (string, error) {
+	return s.startOneOff(ctx, userID, ProductSession, checkoutID, amountToman, desc)
+}
+
+// StartClassPayment opens a gateway payment for a group-class seat checkout.
+func (s *Service) StartClassPayment(ctx context.Context, userID, checkoutID string, amountToman int, desc string) (string, error) {
+	return s.startOneOff(ctx, userID, ProductGroupClass, checkoutID, amountToman, desc)
+}
+
+// startOneOff opens a gateway payment; the payment row keeps the checkout id
+// so the callback can hand the result to the product's module.
+func (s *Service) startOneOff(ctx context.Context, userID, product, checkoutID string, amountToman int, desc string) (string, error) {
 	authority, payURL, err := s.provider.RequestPayment(ctx, amountToman, desc, s.cfg.CallbackURL)
 	if err != nil {
 		return "", err
 	}
 	if err := s.repo.CreatePayment(ctx, domain.Payment{
-		Authority: authority, UserID: userID, Product: ProductSession, PlanID: checkoutID,
+		Authority: authority, UserID: userID, Product: product, PlanID: checkoutID,
 		AmountToman: amountToman, Status: "pending", CreatedAt: s.now(),
 	}); err != nil {
 		return "", err
@@ -344,8 +367,8 @@ func (s *Service) HandleCallback(ctx context.Context, authority, status string) 
 	if err != nil || pay == nil {
 		return s.cfg.FailURL
 	}
-	if pay.Product == ProductSession {
-		return s.handleSessionCallback(ctx, pay, status)
+	if f, ok := s.fulfillers[pay.Product]; ok || pay.Product == ProductSession || pay.Product == ProductGroupClass {
+		return s.handleOneOffCallback(ctx, pay, status, f)
 	}
 	if !strings.EqualFold(status, "OK") {
 		_ = s.repo.MarkPayment(ctx, authority, "failed", "")
@@ -539,11 +562,15 @@ func (s *Service) UserBillingDetail(ctx context.Context, userID string) (*UserBi
 	return out, nil
 }
 
-// handleSessionCallback verifies a session payment and hands the result to the
-// tutor module, which books the session (or releases the held slot).
-func (s *Service) handleSessionCallback(ctx context.Context, pay *domain.Payment, status string) string {
+// handleOneOffCallback verifies a one-off payment and hands the result to the
+// product's module, which books it (or releases what it held).
+func (s *Service) handleOneOffCallback(ctx context.Context, pay *domain.Payment, status string, f SessionFulfiller) string {
+	kind := "kind=session"
+	if pay.Product == ProductGroupClass {
+		kind = "kind=class"
+	}
 	if pay.Status == "paid" {
-		return withQuery(s.cfg.SuccessURL, "kind=session") // already settled (callback replayed)
+		return withQuery(s.cfg.SuccessURL, kind) // already settled (callback replayed)
 	}
 	paid := false
 	if strings.EqualFold(status, "OK") {
@@ -555,15 +582,15 @@ func (s *Service) handleSessionCallback(ctx context.Context, pay *domain.Payment
 	if !paid {
 		_ = s.repo.MarkPayment(ctx, pay.Authority, "failed", "")
 	}
-	if s.sessions != nil {
-		if err := s.sessions.FulfillCheckout(ctx, pay.PlanID, paid); err != nil {
-			return withQuery(s.cfg.FailURL, "kind=session")
+	if f != nil {
+		if err := f.FulfillCheckout(ctx, pay.PlanID, paid); err != nil {
+			return withQuery(s.cfg.FailURL, kind)
 		}
 	}
 	if paid {
-		return withQuery(s.cfg.SuccessURL, "kind=session")
+		return withQuery(s.cfg.SuccessURL, kind)
 	}
-	return withQuery(s.cfg.FailURL, "kind=session")
+	return withQuery(s.cfg.FailURL, kind)
 }
 
 // withQuery appends a query parameter to a URL that may already have some.
