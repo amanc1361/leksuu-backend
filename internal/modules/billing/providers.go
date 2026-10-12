@@ -55,9 +55,12 @@ func (disabledPaymentProvider) VerifyPayment(context.Context, string, int) (stri
 	return "", usecase.ErrPaymentsUnavailable
 }
 
-// zarinpalProvider talks to ZarinPal's v4 REST API (Iran's most common gateway).
-// Amounts are sent in Rial (Toman * 10). NOTE: exercised only against the live
-// gateway; not run in CI. Behind the same port as the stub, so nothing else changes.
+// zarinpalProvider talks to ZarinPal's v4 REST API (Iran's most common gateway):
+// POST /pg/v4/payment/request.json → authority → the learner pays at
+// /pg/StartPay/{authority} → ZarinPal redirects to our callback with
+// Authority and Status=OK|NOK → POST /pg/v4/payment/verify.json settles it
+// (code 100 the first time, 101 when already verified). Amounts are sent in
+// Rial (Toman × 10). The sandbox accepts any UUID-shaped merchant id.
 type zarinpalProvider struct {
 	merchantID string
 	client     *http.Client
@@ -65,64 +68,97 @@ type zarinpalProvider struct {
 	apiBase    string
 }
 
-func newZarinpal(merchantID string) zarinpalProvider {
+const (
+	zarinpalHost        = "https://payment.zarinpal.com"
+	zarinpalSandboxHost = "https://sandbox.zarinpal.com"
+)
+
+func newZarinpal(merchantID string, sandbox bool) zarinpalProvider {
+	host := zarinpalHost
+	if sandbox {
+		host = zarinpalSandboxHost
+	}
 	return zarinpalProvider{
 		merchantID: merchantID,
 		client:     &http.Client{Timeout: 20 * time.Second},
-		startPay:   "https://www.zarinpal.com/pg/StartPay/",
-		apiBase:    "https://api.zarinpal.com/pg/v4/payment",
+		startPay:   host + "/pg/StartPay/",
+		apiBase:    host + "/pg/v4/payment",
 	}
 }
 
 func (zarinpalProvider) Name() string { return "zarinpal" }
 
+// zpResponse is ZarinPal's envelope. On failure `data` is an empty list and
+// `errors` an object (sometimes a list), so both are decoded leniently.
+type zpResponse struct {
+	Data   json.RawMessage `json:"data"`
+	Errors json.RawMessage `json:"errors"`
+}
+
+type zpError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
+// errorOf returns ZarinPal's error, if the envelope carries one.
+func (r zpResponse) errorOf() error {
+	raw := bytes.TrimSpace(r.Errors)
+	if len(raw) == 0 || string(raw) == "[]" || string(raw) == "{}" || string(raw) == "null" {
+		return nil
+	}
+	var one zpError
+	if json.Unmarshal(raw, &one) == nil && one.Code != 0 {
+		return fmt.Errorf("zarinpal error %d: %s", one.Code, one.Message)
+	}
+	var many []zpError
+	if json.Unmarshal(raw, &many) == nil && len(many) > 0 {
+		return fmt.Errorf("zarinpal error %d: %s", many[0].Code, many[0].Message)
+	}
+	return fmt.Errorf("zarinpal error: %s", raw)
+}
+
 func (p zarinpalProvider) RequestPayment(ctx context.Context, amountToman int, desc, callbackURL string) (string, string, error) {
-	body := map[string]any{
+	var data struct {
+		Code      int    `json:"code"`
+		Authority string `json:"authority"`
+	}
+	if err := p.call(ctx, "/request.json", map[string]any{
 		"merchant_id":  p.merchantID,
 		"amount":       amountToman * 10, // Rial
 		"description":  desc,
 		"callback_url": callbackURL,
-	}
-	var out struct {
-		Data struct {
-			Authority string `json:"authority"`
-			Code      int    `json:"code"`
-		} `json:"data"`
-	}
-	if err := p.post(ctx, p.apiBase+"/request.json", body, &out); err != nil {
+	}, &data); err != nil {
 		return "", "", err
 	}
-	if out.Data.Authority == "" {
-		return "", "", fmt.Errorf("zarinpal: empty authority")
+	if data.Code != 100 || data.Authority == "" {
+		return "", "", fmt.Errorf("zarinpal: request code %d", data.Code)
 	}
-	return out.Data.Authority, p.startPay + out.Data.Authority, nil
+	return data.Authority, p.startPay + data.Authority, nil
 }
 
 func (p zarinpalProvider) VerifyPayment(ctx context.Context, authority string, amountToman int) (string, error) {
-	body := map[string]any{
+	var data struct {
+		Code  int   `json:"code"`
+		RefID int64 `json:"ref_id"`
+	}
+	if err := p.call(ctx, "/verify.json", map[string]any{
 		"merchant_id": p.merchantID,
 		"amount":      amountToman * 10,
 		"authority":   authority,
-	}
-	var out struct {
-		Data struct {
-			RefID int64 `json:"ref_id"`
-			Code  int   `json:"code"`
-		} `json:"data"`
-	}
-	if err := p.post(ctx, p.apiBase+"/verify.json", body, &out); err != nil {
+	}, &data); err != nil {
 		return "", err
 	}
-	// 100 = verified, 101 = already verified
-	if out.Data.Code != 100 && out.Data.Code != 101 {
-		return "", fmt.Errorf("zarinpal: verify code %d", out.Data.Code)
+	// 100 = verified now, 101 = already verified (the callback came twice).
+	if data.Code != 100 && data.Code != 101 {
+		return "", fmt.Errorf("zarinpal: verify code %d", data.Code)
 	}
-	return fmt.Sprintf("%d", out.Data.RefID), nil
+	return fmt.Sprintf("%d", data.RefID), nil
 }
 
-func (p zarinpalProvider) post(ctx context.Context, url string, body any, out any) error {
+// call posts to the API and decodes `data`, surfacing ZarinPal's own error.
+func (p zarinpalProvider) call(ctx context.Context, path string, body any, data any) error {
 	b, _ := json.Marshal(body)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(b))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.apiBase+path, bytes.NewReader(b))
 	if err != nil {
 		return err
 	}
@@ -133,9 +169,19 @@ func (p zarinpalProvider) post(ctx context.Context, url string, body any, out an
 		return err
 	}
 	defer resp.Body.Close()
-	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("zarinpal status %d", resp.StatusCode)
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	var env zpResponse
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return fmt.Errorf("zarinpal: status %d, unreadable response", resp.StatusCode)
 	}
-	return json.Unmarshal(data, out)
+	if err := env.errorOf(); err != nil {
+		return err
+	}
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("zarinpal: status %d", resp.StatusCode)
+	}
+	if err := json.Unmarshal(env.Data, data); err != nil {
+		return fmt.Errorf("zarinpal: unexpected data: %s", env.Data)
+	}
+	return nil
 }

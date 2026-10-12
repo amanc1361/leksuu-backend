@@ -39,6 +39,16 @@ func (r *fakeRepo) GetPayment(_ context.Context, a string) (*domain.Payment, err
 	}
 	return nil, nil
 }
+func (r *fakeRepo) TransitionPayment(_ context.Context, a, from, to, ref string) (bool, error) {
+	p, ok := r.pays[a]
+	if !ok || p.Status != from {
+		return false, nil
+	}
+	p.Status, p.RefID = to, ref
+	r.pays[a] = p
+	return true, nil
+}
+
 func (r *fakeRepo) MarkPayment(_ context.Context, a, st, ref string) error {
 	if p, ok := r.pays[a]; ok {
 		p.Status, p.RefID = st, ref
@@ -291,5 +301,42 @@ func TestNoNewClassSubscriptions(t *testing.T) {
 	s := NewService(newFake(), okProvider{}, &fakeWallet{}, Config{})
 	if _, err := s.Subscribe(context.Background(), "u", domain.ProductClasses, "monthly"); err == nil {
 		t.Fatal("buying a class subscription must be refused")
+	}
+}
+
+// A subscription payment grants its period exactly once, however many times
+// the callback is opened; a later "failed" callback can't undo it; and a
+// renewal adds the new period to what is left.
+func TestSubscriptionCallbackSettlesOnceAndRenewalKeepsDays(t *testing.T) {
+	ctx := context.Background()
+	r := newFake()
+	now := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	s := NewService(r, okProvider{}, &fakeWallet{}, Config{SuccessURL: "/ok", FailURL: "/fail",
+		Plans: []domain.PlanOption{{ID: "monthly", AmountToman: 99000, Days: 30}}})
+	s.now = func() time.Time { return now }
+	// 10 days left on the current subscription.
+	_ = r.UpsertSubscription(ctx, domain.Subscription{UserID: "u", Product: domain.ProductCourses, Status: "active", PeriodEnd: now.AddDate(0, 0, 10)})
+	if _, err := s.Subscribe(ctx, "u", domain.ProductCourses, "monthly"); err != nil {
+		t.Fatal(err)
+	}
+	var authority string
+	for a := range r.pays {
+		authority = a
+	}
+	for i := 0; i < 3; i++ { // refresh / back button / replay
+		if got := s.HandleCallback(ctx, authority, "OK"); got != "/ok" {
+			t.Fatalf("callback #%d → %q", i+1, got)
+		}
+	}
+	if got := s.HandleCallback(ctx, authority, "NOK"); got != "/ok" {
+		t.Fatalf("a failed callback after payment must not undo it: %q", got)
+	}
+	sub, _ := r.GetSubscription(ctx, "u", domain.ProductCourses)
+	plan, _ := s.planFor(ctx, domain.ProductCourses, "monthly")
+	if want := now.AddDate(0, 0, 10+plan.Days); !sub.PeriodEnd.Equal(want) {
+		t.Fatalf("period end %v, want %v (10 days left + %d, granted once)", sub.PeriodEnd, want, plan.Days)
+	}
+	if r.pays[authority].Status != "paid" {
+		t.Fatalf("payment status %q", r.pays[authority].Status)
 	}
 }

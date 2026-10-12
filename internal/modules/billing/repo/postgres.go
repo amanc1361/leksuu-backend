@@ -250,3 +250,13 @@ func (r *PostgresBillingRepo) ActiveSubscriberIDs(ctx context.Context, now time.
 	}
 	return out, rows.Err()
 }
+
+// TransitionPayment updates the status only if it is still `from` (atomic).
+func (r *PostgresBillingRepo) TransitionPayment(ctx context.Context, authority, from, to, refID string) (bool, error) {
+	tag, err := r.pool.Exec(ctx,
+		`UPDATE payments SET status=$3, ref_id=$4 WHERE authority=$1 AND status=$2`, authority, from, to, refID)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}

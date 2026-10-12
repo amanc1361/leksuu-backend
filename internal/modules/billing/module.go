@@ -13,6 +13,8 @@ import (
 type Deps struct {
 	ProviderKind string // "stub" | "zarinpal"
 	MerchantID   string
+	// ZarinpalSandbox sends payments to ZarinPal's sandbox (testing; no money moves).
+	ZarinpalSandbox bool
 	// AllowStub permits the simulated stub gateway (development only). When
 	// false, a "stub" (or an unconfigured gateway) disables purchases instead.
 	AllowStub bool
@@ -32,7 +34,7 @@ func New(d Deps) *Module {
 	var p usecase.PaymentProvider
 	switch {
 	case d.ProviderKind == "zarinpal" && d.MerchantID != "":
-		p = newZarinpal(d.MerchantID)
+		p = newZarinpal(d.MerchantID, d.ZarinpalSandbox)
 	case d.ProviderKind != "zarinpal" && d.AllowStub:
 		p = stubPaymentProvider{}
 	default:

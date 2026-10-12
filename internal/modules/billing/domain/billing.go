@@ -87,6 +87,10 @@ type Repository interface {
 	CreatePayment(ctx context.Context, p Payment) error
 	GetPayment(ctx context.Context, authority string) (*Payment, error)
 	MarkPayment(ctx context.Context, authority, status, refID string) error
+	// TransitionPayment moves a payment from one status to another only if it
+	// is still in the first; false when another request got there first. This
+	// makes a payment grant what it bought exactly once.
+	TransitionPayment(ctx context.Context, authority, from, to, refID string) (bool, error)
 
 	UsageToday(ctx context.Context, userID, action, day string) (int, error)
 	IncrUsage(ctx context.Context, userID, action, day string) (int, error)

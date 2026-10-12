@@ -151,8 +151,9 @@ func New(cfg config.Config) (*App, error) {
 	})
 
 	billingModule := billing.New(billing.Deps{
-		ProviderKind: cfg.PaymentProvider,
-		MerchantID:   cfg.ZarinpalMerchantID,
+		ProviderKind:    cfg.PaymentProvider,
+		MerchantID:      cfg.ZarinpalMerchantID,
+		ZarinpalSandbox: cfg.ZarinpalSandbox,
 		// The stub approves every payment without charging; never in production.
 		AllowStub: !cfg.IsProduction(),
 		Repo:      repos.billing,

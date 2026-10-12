@@ -370,16 +370,31 @@ func (s *Service) HandleCallback(ctx context.Context, authority, status string) 
 	if f, ok := s.fulfillers[pay.Product]; ok || pay.Product == ProductSession || pay.Product == ProductGroupClass {
 		return s.handleOneOffCallback(ctx, pay, status, f)
 	}
+	// A payment is settled once: a repeated callback (refresh, back button, a
+	// replayed URL) reports the outcome but never grants anything again, and
+	// a "failed" callback can't overwrite a payment that was already paid.
+	switch pay.Status {
+	case "paid":
+		return s.cfg.SuccessURL
+	case "failed":
+		return s.cfg.FailURL
+	}
 	if !strings.EqualFold(status, "OK") {
-		_ = s.repo.MarkPayment(ctx, authority, "failed", "")
+		_, _ = s.repo.TransitionPayment(ctx, authority, "pending", "failed", "")
 		return s.cfg.FailURL
 	}
 	refID, err := s.provider.VerifyPayment(ctx, authority, pay.AmountToman)
 	if err != nil {
-		_ = s.repo.MarkPayment(ctx, authority, "failed", "")
+		_, _ = s.repo.TransitionPayment(ctx, authority, "pending", "failed", "")
 		return s.cfg.FailURL
 	}
-	_ = s.repo.MarkPayment(ctx, authority, "paid", refID)
+	won, err := s.repo.TransitionPayment(ctx, authority, "pending", "paid", refID)
+	if err != nil {
+		return s.cfg.FailURL
+	}
+	if !won { // a concurrent callback settled it
+		return s.cfg.SuccessURL
+	}
 	product := pay.Product
 	if product == "" {
 		product = domain.ProductCourses
@@ -388,9 +403,9 @@ func (s *Service) HandleCallback(ctx context.Context, authority, status string) 
 	if !ok {
 		return s.cfg.FailURL
 	}
+	// A renewal adds the plan to what is left, so no paid day is lost.
 	end := s.now().AddDate(0, 0, plan.Days)
-	// extend if already active
-	if cur, _ := s.repo.GetSubscription(ctx, pay.UserID, product); cur.Active(s.now()) && cur.PeriodEnd.After(end) {
+	if cur, _ := s.repo.GetSubscription(ctx, pay.UserID, product); cur != nil && cur.Active(s.now()) {
 		end = cur.PeriodEnd.AddDate(0, 0, plan.Days)
 	}
 	_ = s.repo.UpsertSubscription(ctx, domain.Subscription{
@@ -569,18 +584,29 @@ func (s *Service) handleOneOffCallback(ctx context.Context, pay *domain.Payment,
 	if pay.Product == ProductGroupClass {
 		kind = "kind=class"
 	}
-	if pay.Status == "paid" {
-		return withQuery(s.cfg.SuccessURL, kind) // already settled (callback replayed)
+	switch pay.Status { // already settled: report, don't settle again
+	case "paid":
+		return withQuery(s.cfg.SuccessURL, kind)
+	case "failed":
+		return withQuery(s.cfg.FailURL, kind)
 	}
 	paid := false
 	if strings.EqualFold(status, "OK") {
 		if refID, err := s.provider.VerifyPayment(ctx, pay.Authority, pay.AmountToman); err == nil {
-			_ = s.repo.MarkPayment(ctx, pay.Authority, "paid", refID)
+			won, err := s.repo.TransitionPayment(ctx, pay.Authority, "pending", "paid", refID)
+			if err != nil {
+				return withQuery(s.cfg.FailURL, kind)
+			}
+			if !won { // a concurrent callback settled it
+				return withQuery(s.cfg.SuccessURL, kind)
+			}
 			paid = true
 		}
 	}
 	if !paid {
-		_ = s.repo.MarkPayment(ctx, pay.Authority, "failed", "")
+		if won, _ := s.repo.TransitionPayment(ctx, pay.Authority, "pending", "failed", ""); !won {
+			return withQuery(s.cfg.FailURL, kind)
+		}
 	}
 	if f != nil {
 		if err := f.FulfillCheckout(ctx, pay.PlanID, paid); err != nil {

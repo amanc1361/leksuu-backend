@@ -4,6 +4,7 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -26,6 +27,7 @@ type Config struct {
 	AIDisableThinking  bool
 	PaymentProvider    string
 	ZarinpalMerchantID string
+	ZarinpalSandbox    bool
 	FreeDailyLimit     int
 	GemUnlockCost      int
 	PriceMonthlyToman  int
@@ -87,6 +89,7 @@ func Load() Config {
 		AIDisableThinking:      env("AI_DISABLE_THINKING", "true") != "false",
 		PaymentProvider:        env("PAYMENT_PROVIDER", "stub"),
 		ZarinpalMerchantID:     env("ZARINPAL_MERCHANT_ID", ""),
+		ZarinpalSandbox:        env("ZARINPAL_SANDBOX", "") == "true",
 		FreeDailyLimit:         atoiDefault(env("FREE_DAILY_LIMIT", "2")),
 		GemUnlockCost:          atoiDefault(env("GEM_UNLOCK_COST", "50")),
 		PriceMonthlyToman:      atoiDefault(env("PRICE_MONTHLY_TOMAN", "99000")),
@@ -146,6 +149,21 @@ var placeholderSecrets = map[string]bool{
 func (c Config) Validate() error {
 	if !c.IsProduction() {
 		return nil
+	}
+	// A real gateway must send paying users back to this site, not localhost.
+	if strings.EqualFold(c.PaymentProvider, "zarinpal") {
+		for name, u := range map[string]string{
+			"BILLING_CALLBACK_URL": c.BillingCallbackURL,
+			"BILLING_SUCCESS_URL":  c.BillingSuccessURL,
+			"BILLING_FAIL_URL":     c.BillingFailURL,
+		} {
+			if !strings.HasPrefix(u, "https://") || strings.Contains(u, "localhost") || strings.Contains(u, "127.0.0.1") {
+				return fmt.Errorf("config: %s must be this site's public https address when PAYMENT_PROVIDER=zarinpal (got %q)", name, u)
+			}
+		}
+		if strings.TrimSpace(c.ZarinpalMerchantID) == "" {
+			return errors.New("config: ZARINPAL_MERCHANT_ID is required when PAYMENT_PROVIDER=zarinpal")
+		}
 	}
 	if placeholderSecrets[strings.ToLower(strings.TrimSpace(c.JWTSecret))] {
 		return errors.New("config: JWT_SECRET is empty or a placeholder; set a long random secret for production")

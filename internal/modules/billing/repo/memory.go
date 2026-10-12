@@ -226,3 +226,16 @@ func (r *MemoryBillingRepo) ActiveSubscriberIDs(_ context.Context, now time.Time
 	}
 	return out, nil
 }
+
+// TransitionPayment updates the status only if it is still `from`.
+func (r *MemoryBillingRepo) TransitionPayment(_ context.Context, authority, from, to, refID string) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	p, ok := r.pays[authority]
+	if !ok || p.Status != from {
+		return false, nil
+	}
+	p.Status, p.RefID = to, refID
+	r.pays[authority] = p
+	return true, nil
+}
