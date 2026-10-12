@@ -38,3 +38,6 @@ func New(d Deps) *Module {
 }
 
 func (m *Module) Mount(mux *http.ServeMux, prefix string) { m.handler.Mount(mux, prefix, m.guard) }
+
+// SetPremium puts the coach behind the learning subscription.
+func (m *Module) SetPremium(p rest.Premium) { m.handler.SetPremium(p) }

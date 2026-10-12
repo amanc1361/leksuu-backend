@@ -840,7 +840,32 @@ func (s *Service) EffectiveLessonAccess(ctx context.Context, lessonID string) (s
 	if r := s.ruleFor(ctx, "course", l.CourseID); r != "" {
 		return r, nil
 	}
+	// The free tier: every course's first chapter is open to everyone; the rest
+	// needs the learning subscription. Explicit rules above always win.
+	if s.inFirstChapter(ctx, l) {
+		return domain.AccessFree, nil
+	}
 	return domain.AccessDefault, nil
+}
+
+// inFirstChapter reports whether the lesson belongs to its course's first
+// chapter (the unit with the lowest position). Lessons outside any chapter are
+// not part of the free tier.
+func (s *Service) inFirstChapter(ctx context.Context, l *domain.Lesson) bool {
+	if l.UnitID == "" {
+		return false
+	}
+	units, err := s.courses.Units(ctx, l.CourseID)
+	if err != nil || len(units) == 0 {
+		return false
+	}
+	first := units[0]
+	for _, u := range units[1:] {
+		if u.Position < first.Position {
+			first = u
+		}
+	}
+	return first.ID == l.UnitID
 }
 
 // quickPracticeAccessChecks bounds how many not-yet-completed lessons one quick

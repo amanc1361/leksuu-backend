@@ -154,44 +154,32 @@ func TestCallbackFailsGracefully(t *testing.T) {
 
 var _ = time.Now
 
-func TestLessonUnlockFreeThenGems(t *testing.T) {
+// Outside the free tier a lesson needs the learning subscription: no daily
+// free unlocks and no gem unlocks are offered (and no gems are spent), an
+// unlock already made today is still honoured, and subscribing opens it.
+func TestLessonAccessNeedsSubscriptionOutsideFreeTier(t *testing.T) {
 	ctx := context.Background()
 	r := newFake()
 	w := &fakeWallet{bal: 120}
-	s := NewService(r, okProvider{}, w, Config{
-		FreeDailyLimit: 2, GemUnlockCost: 50, Action: "lesson",
-	})
-	// first lesson: free slot available
-	if d, _ := s.LessonAccess(ctx, "u", "L1"); d.Reason != "free_available" || d.FreeLimit != 2 {
-		t.Fatalf("L1 access = %+v", d)
+	s := NewService(r, okProvider{}, w, Config{FreeDailyLimit: 2, GemUnlockCost: 50, Action: "lesson"})
+	if d, _ := s.LessonAccess(ctx, "u", "L1"); d.Allowed || d.Reason != "subscription_required" || d.CanUseGems || d.FreeLimit != 0 {
+		t.Fatalf("L1 access = %+v (no free or gem path expected)", d)
 	}
-	if d, err := s.UnlockLesson(ctx, "u", "L1"); err != nil || !d.Allowed {
-		t.Fatalf("unlock L1 = %+v err=%v", d, err)
+	if _, err := s.UnlockLesson(ctx, "u", "L1"); err == nil {
+		t.Fatal("unlocking without a subscription must fail")
 	}
-	// second free
-	if d, err := s.UnlockLesson(ctx, "u", "L2"); err != nil || !d.Allowed {
-		t.Fatalf("unlock L2 = %+v err=%v", d, err)
+	if w.bal != 120 {
+		t.Fatalf("no gems may be spent, balance %d", w.bal)
 	}
-	// third: free exhausted -> needs gems (have 120 >= 50)
-	if d, _ := s.LessonAccess(ctx, "u", "L3"); d.Reason != "needs_unlock" || !d.CanUseGems {
-		t.Fatalf("L3 access = %+v", d)
+	// An unlock made earlier today (before this change) is honoured.
+	_ = r.AddUnlock(ctx, "u", "L2", "gem", s.day())
+	if d, _ := s.LessonAccess(ctx, "u", "L2"); !d.Allowed || d.Reason != "unlocked" {
+		t.Fatalf("existing unlock should be honoured: %+v", d)
 	}
-	if d, err := s.UnlockLesson(ctx, "u", "L3"); err != nil || !d.Allowed {
-		t.Fatalf("unlock L3 (gems) = %+v err=%v", d, err)
-	}
-	if w.bal != 70 {
-		t.Fatalf("after gem unlock bal = %d, want 70", w.bal)
-	}
-	// already-unlocked lesson stays accessible without charge
-	if d, _ := s.LessonAccess(ctx, "u", "L1"); d.Reason != "unlocked" {
-		t.Fatalf("L1 re-access = %+v", d)
-	}
-	// spend down: L4 (gems 70->20), then L5 fails (20 < 50)
-	if _, err := s.UnlockLesson(ctx, "u", "L4"); err != nil {
-		t.Fatalf("unlock L4 err=%v", err)
-	}
-	if _, err := s.UnlockLesson(ctx, "u", "L5"); err == nil {
-		t.Fatalf("unlock L5 should fail (insufficient gems)")
+	// A subscriber gets in.
+	_ = r.UpsertSubscription(ctx, domain.Subscription{UserID: "u", Product: domain.ProductCourses, Status: "active", PeriodEnd: time.Now().Add(24 * time.Hour)})
+	if d, _ := s.LessonAccess(ctx, "u", "L1"); !d.Allowed || !d.IsPremium {
+		t.Fatalf("subscriber access = %+v", d)
 	}
 }
 

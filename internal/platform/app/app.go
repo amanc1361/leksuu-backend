@@ -169,6 +169,8 @@ func New(cfg config.Config) (*App, error) {
 		},
 		Guard: authModule.Authenticator(),
 	})
+	// The AI coach is not free: it needs the learning subscription.
+	aiModule.SetPremium(billingModule.Service())
 	billingModule.Service().SetSettings(billingSettings{settingsModule.Service()})
 	switch billingModule.Service().ProviderName() {
 	case "stub":

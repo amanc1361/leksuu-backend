@@ -155,8 +155,21 @@ func TestEffectiveLessonAccessResolution(t *testing.T) {
 	}
 	lid := lessons[0].ID
 
-	if a, _ := svc.EffectiveLessonAccess(ctx, lid); a != domain.AccessDefault {
-		t.Fatalf("default = %s, want %s", a, domain.AccessDefault)
+	// Free tier: the course's first chapter is free by default…
+	if a, _ := svc.EffectiveLessonAccess(ctx, lid); a != domain.AccessFree {
+		t.Fatalf("first chapter default = %s, want free", a)
+	}
+	// …a lesson in a later chapter needs the learning subscription.
+	u2 := &domain.Unit{CourseID: cid, Position: 2, Title: "Chapter 2"}
+	if err := r.CreateUnit(ctx, u2); err != nil {
+		t.Fatal(err)
+	}
+	l2 := &domain.Lesson{CourseID: cid, UnitID: u2.ID, Position: 1, Title: "Later"}
+	if err := r.CreateLesson(ctx, l2); err != nil {
+		t.Fatal(err)
+	}
+	if a, _ := svc.EffectiveLessonAccess(ctx, l2.ID); a != domain.AccessDefault {
+		t.Fatalf("later chapter default = %s, want %s", a, domain.AccessDefault)
 	}
 	_ = svc.SetAccess(ctx, "course", cid, domain.AccessClasses)
 	if a, _ := svc.EffectiveLessonAccess(ctx, lid); a != domain.AccessClasses {

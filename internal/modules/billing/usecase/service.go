@@ -176,98 +176,32 @@ func (s *Service) LessonAccess(ctx context.Context, userID, lessonID string) (do
 	if sub.Active(s.now()) {
 		return domain.AccessDecision{Allowed: true, Reason: "premium", IsPremium: true}, nil
 	}
-	today := s.day()
-	unlocked, err := s.repo.LessonUnlocked(ctx, userID, lessonID, today)
+	// Outside the free tier (each course's first chapter) a lesson needs the
+	// learning subscription. Daily free unlocks and gem unlocks are no longer
+	// offered; an unlock already made today is still honoured.
+	unlocked, err := s.repo.LessonUnlocked(ctx, userID, lessonID, s.day())
 	if err != nil {
 		return domain.AccessDecision{}, err
 	}
-	freeUsed, err := s.repo.FreeUnlocksToday(ctx, userID, today)
-	if err != nil {
-		return domain.AccessDecision{}, err
+	if unlocked {
+		return domain.AccessDecision{Allowed: true, Reason: "unlocked"}, nil
 	}
-	bal := s.gemBalance(ctx, userID)
-	pr := s.pricing(ctx)
-	d := domain.AccessDecision{
-		FreeUsed: freeUsed, FreeLimit: pr.FreeDailyLimit,
-		GemCost: pr.GemUnlockCost, GemBalance: bal, CanUseGems: bal >= pr.GemUnlockCost,
-	}
-	switch {
-	case unlocked:
-		d.Allowed, d.Reason = true, "unlocked"
-	case freeUsed < pr.FreeDailyLimit:
-		d.Reason = "free_available"
-	default:
-		d.Reason = "needs_unlock"
-	}
-	return d, nil
+	return domain.AccessDecision{Allowed: false, Reason: "subscription_required"}, nil
 }
 
 // UnlockLesson grants access: free slot if available, else spends gems. Premium
 // users always pass. Returns the resulting access decision.
 func (s *Service) UnlockLesson(ctx context.Context, userID, lessonID string) (domain.AccessDecision, error) {
-	if lessonID == "" {
-		return domain.AccessDecision{}, apperr.ErrBadRequest
+	// Beyond the free tier (each course's first chapter) a lesson is opened by
+	// the subscription only: no daily free unlocks, no gem unlocks.
+	d, err := s.LessonAccess(ctx, userID, lessonID)
+	if err != nil || d.Allowed {
+		return d, err
 	}
-	req, err := s.lessonRequirement(ctx, lessonID)
-	if err != nil {
-		return domain.AccessDecision{}, err
-	}
-	switch req {
-	case domain.AccessFree:
-		return domain.AccessDecision{Allowed: true, Reason: "free"}, nil
-	case domain.ProductClasses:
-		ok, err := s.HasProduct(ctx, userID, domain.ProductClasses)
-		if err != nil {
-			return domain.AccessDecision{}, err
-		}
-		if ok {
-			return domain.AccessDecision{Allowed: true, Reason: "unlocked", IsPremium: true}, nil
-		}
+	if d.Reason == "classes_required" {
 		return domain.AccessDecision{}, apperr.New("billing.class_subscription_required", apperr.KindForbidden)
 	}
-	sub, err := s.repo.GetSubscription(ctx, userID, domain.ProductCourses)
-	if err != nil {
-		return domain.AccessDecision{}, err
-	}
-	if sub.Active(s.now()) {
-		return domain.AccessDecision{Allowed: true, Reason: "premium", IsPremium: true}, nil
-	}
-	today := s.day()
-	if ok, err := s.repo.LessonUnlocked(ctx, userID, lessonID, today); err != nil {
-		return domain.AccessDecision{}, err
-	} else if ok {
-		return domain.AccessDecision{Allowed: true, Reason: "unlocked"}, nil
-	}
-	freeUsed, err := s.repo.FreeUnlocksToday(ctx, userID, today)
-	if err != nil {
-		return domain.AccessDecision{}, err
-	}
-	pr := s.pricing(ctx)
-	if freeUsed < pr.FreeDailyLimit {
-		if err := s.repo.AddUnlock(ctx, userID, lessonID, "free", today); err != nil {
-			return domain.AccessDecision{}, err
-		}
-		return domain.AccessDecision{Allowed: true, Reason: "unlocked", FreeUsed: freeUsed + 1, FreeLimit: pr.FreeDailyLimit}, nil
-	}
-	// out of free slots -> try gems
-	bal := s.gemBalance(ctx, userID)
-	if s.wallet == nil || bal < pr.GemUnlockCost {
-		return domain.AccessDecision{}, apperr.New("billing.needs_unlock", apperr.KindForbidden)
-	}
-	if err := s.wallet.Spend(ctx, userID, pr.GemUnlockCost); err != nil {
-		return domain.AccessDecision{}, err
-	}
-	if err := s.repo.AddUnlock(ctx, userID, lessonID, "gem", today); err != nil {
-		// The unlock was not recorded: give the gems back rather than charge
-		// for nothing (best-effort refund when the wallet supports it).
-		if c, ok := s.wallet.(interface {
-			Credit(ctx context.Context, userID string, amount int) error
-		}); ok {
-			_ = c.Credit(ctx, userID, pr.GemUnlockCost)
-		}
-		return domain.AccessDecision{}, err
-	}
-	return domain.AccessDecision{Allowed: true, Reason: "unlocked", GemBalance: bal - pr.GemUnlockCost}, nil
+	return domain.AccessDecision{}, apperr.New("billing.premium_required", apperr.KindForbidden)
 }
 
 func (s *Service) ProviderName() string { return s.provider.Name() }

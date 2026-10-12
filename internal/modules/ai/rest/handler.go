@@ -2,7 +2,9 @@
 package rest
 
 import (
+	"context"
 	"encoding/json"
+	"github.com/leksuu/platform/internal/shared/authn"
 	"net/http"
 
 	"github.com/leksuu/platform/internal/modules/ai/domain"
@@ -11,9 +13,39 @@ import (
 	"github.com/leksuu/platform/internal/shared/web"
 )
 
-type Handler struct{ svc *usecase.Service }
+type Handler struct {
+	svc     *usecase.Service
+	premium Premium
+}
 
 func NewHandler(svc *usecase.Service) *Handler { return &Handler{svc: svc} }
+
+// Premium checks the learning subscription. The AI coach is not part of the
+// free tier: every message costs a model call.
+type Premium interface {
+	RequirePremium(ctx context.Context, userID string) error
+}
+
+// SetPremium enables the subscription check on the coach.
+func (h *Handler) SetPremium(p Premium) { h.premium = p }
+
+// requirePremium writes the error and returns false when the caller has no
+// learning subscription.
+func (h *Handler) requirePremium(w http.ResponseWriter, r *http.Request) bool {
+	if h.premium == nil {
+		return true
+	}
+	p, ok := authn.FromContext(r.Context())
+	if !ok {
+		web.Error(w, r, apperr.ErrInternal)
+		return false
+	}
+	if err := h.premium.RequirePremium(r.Context(), p.Subject); err != nil {
+		web.Error(w, r, err)
+		return false
+	}
+	return true
+}
 
 type Guard interface {
 	RequireRole(role string, next http.Handler) http.Handler
@@ -93,6 +125,9 @@ func (h *Handler) Translate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) Writing(w http.ResponseWriter, r *http.Request) {
+	if !h.requirePremium(w, r) {
+		return
+	}
 	var in struct {
 		Text       string `json:"text"`
 		TargetLang string `json:"target_lang"`
@@ -114,6 +149,9 @@ func (h *Handler) Writing(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) Chat(w http.ResponseWriter, r *http.Request) {
+	if !h.requirePremium(w, r) {
+		return
+	}
 	var in struct {
 		Messages   []domain.ChatMessage `json:"messages"`
 		TargetLang string               `json:"target_lang"`
