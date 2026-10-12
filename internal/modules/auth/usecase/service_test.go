@@ -282,3 +282,31 @@ func TestUpdateProfileFollowsLanguageTable(t *testing.T) {
 		t.Fatalf("language not enabled in the table should be rejected, got %v", err)
 	}
 }
+
+// An account is exactly one type; changing it replaces the role.
+func TestSetAccountTypeIsExclusive(t *testing.T) {
+	s := newService()
+	ctx := context.Background()
+	u, err := s.Register(ctx, usecase.RegisterInput{Email: "type@x.com", Password: "pw", DisplayName: "T"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rolesOf := func() []string {
+		got, err := s.UserDetail(ctx, u.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got.Roles
+	}
+	for _, c := range []struct{ typ, role string }{{"admin", "admin"}, {"teacher", "teacher"}, {"learner", "student"}} {
+		if err := s.SetAccountType(ctx, u.ID, c.typ); err != nil {
+			t.Fatalf("%s: %v", c.typ, err)
+		}
+		if r := rolesOf(); len(r) != 1 || r[0] != c.role {
+			t.Fatalf("after %s the account should have only %q, has %v", c.typ, c.role, r)
+		}
+	}
+	if err := s.SetAccountType(ctx, u.ID, "owner"); err == nil {
+		t.Fatal("unknown account type must be rejected")
+	}
+}

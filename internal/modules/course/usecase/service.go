@@ -60,7 +60,20 @@ type SpeakingScores interface {
 type Viewer struct {
 	UserID string
 	Admin  bool
+	// Account is the account type (learner | teacher | admin). Admins use the
+	// learning app only to preview: answers are graded but nothing is
+	// recorded. Teachers don't use it at all. Empty means learner.
+	Account string
 }
+
+// Account types (mirroring authn).
+const (
+	AccountTeacher = "teacher"
+	AccountAdmin   = "admin"
+)
+
+func (v Viewer) preview() bool { return v.Account == AccountAdmin }
+func (v Viewer) learner() bool { return v.Account != AccountTeacher && v.Account != AccountAdmin }
 
 // Service implements the course use cases.
 type Service struct {
@@ -485,6 +498,7 @@ func (s *Service) localizeItems(ctx context.Context, items []domain.LessonItem) 
 // CompletionResult is the outcome of completing a lesson.
 type CompletionResult struct {
 	AwardedXP bool // XP was granted (only for the first completion)
+	Preview   bool // admin preview: nothing was recorded
 	// Checkpoint results: a checkpoint completes only at CheckpointPassRatio
 	// or better, scored on the latest attempt at each of its questions.
 	Checkpoint bool
@@ -504,6 +518,9 @@ const CheckpointPassRatio = 0.8
 // as are writing and roleplay items, which are not graded. Completion XP is
 // awarded once per user and lesson, however often completion is requested.
 func (s *Service) CompleteLesson(ctx context.Context, v Viewer, lessonID string) (*CompletionResult, error) {
+	if v.Account == AccountTeacher {
+		return nil, domain.ErrLearnerOnly
+	}
 	l, err := s.visibleLesson(ctx, v, lessonID)
 	if err != nil {
 		return nil, err
@@ -521,6 +538,11 @@ func (s *Service) CompleteLesson(ctx context.Context, v Viewer, lessonID string)
 	}
 	if len(items) == 0 {
 		return nil, domain.ErrLessonEmpty
+	}
+	// Admin preview: the lesson can be finished without answering everything,
+	// and nothing is recorded or awarded.
+	if v.preview() {
+		return &CompletionResult{Passed: true, Preview: true}, nil
 	}
 	var required []string
 	for _, it := range items {
@@ -594,6 +616,7 @@ type GradeResult struct {
 	Solution  json.RawMessage
 	FirstTry  bool // this was the user's first attempt at the exercise
 	AwardedXP bool // XP was granted (first-attempt-correct only)
+	Preview   bool // admin preview: graded, nothing recorded
 }
 
 // GradeExercise grades a learner's answer SERVER-SIDE for any supported type
@@ -604,6 +627,9 @@ type GradeResult struct {
 // recorded. Speak exercises are graded from the server's own pronunciation
 // assessment, never from a score the client sends.
 func (s *Service) GradeExercise(ctx context.Context, v Viewer, exerciseID string, answer json.RawMessage) (*GradeResult, error) {
+	if v.Account == AccountTeacher {
+		return nil, domain.ErrLearnerOnly
+	}
 	ex, err := s.courses.Exercise(ctx, exerciseID)
 	if err != nil {
 		return nil, err
@@ -628,6 +654,9 @@ func (s *Service) GradeExercise(ctx context.Context, v Viewer, exerciseID string
 	}
 	var correct bool
 	var solution json.RawMessage
+	if ex.Type == TypeSpeak && v.preview() {
+		return &GradeResult{Correct: true, Score: 1, Preview: true}, nil
+	}
 	if ex.Type == TypeSpeak {
 		if s.speaking == nil {
 			return nil, domain.ErrNoAssessment
@@ -645,6 +674,15 @@ func (s *Service) GradeExercise(ctx context.Context, v Viewer, exerciseID string
 		}
 	} else if correct, solution, err = grade(ex, answer); err != nil {
 		return nil, err
+	}
+	// Admin preview: grade and show the result, record nothing (no attempt,
+	// no XP, no review enrolment).
+	if v.preview() {
+		res := &GradeResult{Correct: correct, Solution: solution, Preview: true}
+		if correct {
+			res.Score = 1
+		}
+		return res, nil
 	}
 	// Count prior attempts BEFORE recording this one: XP is granted only for a
 	// first-attempt-correct answer. A wrong first attempt earns nothing, and any

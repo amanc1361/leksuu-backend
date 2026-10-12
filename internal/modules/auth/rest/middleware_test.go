@@ -72,3 +72,34 @@ func TestOptionalAuth(t *testing.T) {
 		t.Fatalf("an invalid token must be refused so the client refreshes it, got %d", rec.Code)
 	}
 }
+
+// Learning-only APIs admit learner accounts; teacher and admin accounts are
+// refused (403), whatever roles their token was issued with.
+func TestLearnerGuardAdmitsOnlyLearners(t *testing.T) {
+	jwt := security.NewJWT([]byte("test-secret"), 15*time.Minute, time.Now)
+	a := NewAuthenticator(jwt)
+	a.SetAccountChecker(accounts{
+		"learner":   {active: true, roles: []string{"student"}},
+		"teacher":   {active: true, roles: []string{"teacher"}},
+		"admin":     {active: true, roles: []string{"admin"}},
+		"ex-admin":  {active: true, roles: []string{"student"}}, // admin role removed since login
+		"admin+stu": {active: true, roles: []string{"student", "admin"}},
+	})
+	h := LearnerGuard{a}.Require(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	for id, want := range map[string]int{"learner": 200, "teacher": 403, "admin": 403, "ex-admin": 200, "admin+stu": 403} {
+		token, _, _ := jwt.Issue(id, []string{"admin"})
+		req := httptest.NewRequest(http.MethodGet, "/srs/due", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != want {
+			t.Errorf("%s: want %d, got %d", id, want, rec.Code)
+		}
+	}
+	// No token at all: 401, as before.
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/srs/due", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("anonymous: want 401, got %d", rec.Code)
+	}
+}

@@ -445,6 +445,33 @@ func (s *Service) SetUserRole(ctx context.Context, userID, role string, enabled 
 	return s.users.RemoveRole(ctx, userID, role)
 }
 
+// SetAccountType makes an account exactly one type — learner, teacher or
+// admin — by giving it that type's role and removing the others. The new role
+// is added before the others are removed, so the account is never left
+// without one.
+func (s *Service) SetAccountType(ctx context.Context, userID, accountType string) error {
+	role, ok := map[string]string{"learner": domain.RoleStudent, "teacher": domain.RoleTeacher, "admin": domain.RoleAdmin}[accountType]
+	if !ok {
+		return apperr.New("auth.invalid_account_type", apperr.KindValidation)
+	}
+	if _, err := s.users.ByID(ctx, userID); err != nil {
+		return apperr.New("auth.user_not_found", apperr.KindNotFound)
+	}
+	defer s.changed(userID)
+	if err := s.users.AssignRole(ctx, userID, role); err != nil {
+		return err
+	}
+	for _, other := range []string{domain.RoleStudent, domain.RoleTeacher, domain.RoleAdmin} {
+		if other == role {
+			continue
+		}
+		if err := s.users.RemoveRole(ctx, userID, other); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // SetUserStatus suspends or reactivates a user account (admin). A suspended user
 // can no longer log in. Validates the status and the user's existence.
 func (s *Service) SetUserStatus(ctx context.Context, userID, status string) error {

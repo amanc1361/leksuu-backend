@@ -111,12 +111,12 @@ func New(cfg config.Config) (*App, error) {
 
 	placementModule := placement.New(placement.Deps{
 		Repo:  repos.placement,
-		Guard: authModule.Authenticator(),
+		Guard: authModule.LearnerGuard(),
 	})
 
 	gamificationModule := gamification.New(gamification.Deps{
 		Repo:  repos.gamification,
-		Guard: authModule.Authenticator(),
+		Guard: authModule.LearnerGuard(),
 		Clock: time.Now,
 	})
 
@@ -130,7 +130,7 @@ func New(cfg config.Config) (*App, error) {
 	shadowingModule := shadowing.New(shadowing.Deps{
 		Repo:     repos.shadowing,
 		Rewarder: gamificationModule.Rewards(),
-		Guard:    authModule.Authenticator(),
+		Guard:    authModule.LearnerGuard(),
 	})
 
 	aiModule := ai.New(ai.Deps{
@@ -139,7 +139,7 @@ func New(cfg config.Config) (*App, error) {
 		Model:           cfg.AIModel,
 		APIKey:          cfg.AIAPIKey,
 		DisableThinking: cfg.AIDisableThinking,
-		Guard:           authModule.Authenticator(),
+		Guard:           authModule.LearnerGuard(),
 	})
 
 	settingsModule := settings.New(settings.Deps{
@@ -185,7 +185,7 @@ func New(cfg config.Config) (*App, error) {
 		Repo:         repos.pron,
 		Rewarder:     gamificationModule.Rewards(),
 		Premium:      billingModule.Service(),
-		Guard:        authModule.Authenticator(),
+		Guard:        authModule.LearnerGuard(),
 	})
 
 	adminModule := admin.New(admin.Deps{
@@ -221,7 +221,7 @@ func New(cfg config.Config) (*App, error) {
 
 	srsModule := srs.New(srs.Deps{
 		Repo:     repos.srs,
-		Guard:    authModule.Authenticator(),
+		Guard:    authModule.LearnerGuard(),
 		Rewarder: gamificationModule.Rewards(), // a review grants a little XP
 		Clock:    time.Now,
 	})

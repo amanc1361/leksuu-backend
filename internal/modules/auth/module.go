@@ -71,3 +71,8 @@ func (m *Module) BootstrapAdmins(ctx context.Context, password string) {
 		_ = m.svc.EnsureAdmin(ctx, e, password)
 	}
 }
+
+// LearnerGuard guards learning-only modules (learner accounts only).
+func (m *Module) LearnerGuard() rest.LearnerGuard {
+	return rest.LearnerGuard{Authenticator: m.Authenticator()}
+}

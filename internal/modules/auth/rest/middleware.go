@@ -159,3 +159,22 @@ func (a *Authenticator) RequireRole(role string, next http.Handler) http.Handler
 		web.Error(w, r, domain.ErrForbidden)
 	}))
 }
+
+// RequireLearner admits only learner accounts: teacher and admin accounts are
+// kept out of the learning app's APIs (progress, XP, review, coach…).
+func (a *Authenticator) RequireLearner(next http.Handler) http.Handler {
+	return a.Require(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if p, ok := authn.FromContext(r.Context()); ok && p.AccountType() == authn.AccountLearner {
+			next.ServeHTTP(w, r)
+			return
+		}
+		web.Error(w, r, domain.ErrLearnerOnly)
+	}))
+}
+
+// LearnerGuard is the guard handed to learning-only modules: their Require
+// becomes RequireLearner. Admin routes (RequireRole) are unaffected.
+type LearnerGuard struct{ *Authenticator }
+
+// Require admits learner accounts only.
+func (g LearnerGuard) Require(next http.Handler) http.Handler { return g.RequireLearner(next) }

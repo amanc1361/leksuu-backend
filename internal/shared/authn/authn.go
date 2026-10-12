@@ -32,3 +32,24 @@ func FromContext(ctx context.Context) (Principal, bool) {
 	p, ok := ctx.Value(principalKey).(Principal)
 	return p, ok
 }
+
+// Account types. Every account is exactly one of these: a learner uses the
+// learning app, a teacher only the teaching portal, an admin only the admin
+// panel. The type follows the account's roles (admin wins over teacher).
+const (
+	AccountLearner = "learner"
+	AccountTeacher = "teacher"
+	AccountAdmin   = "admin"
+)
+
+// AccountType reports which kind of account the principal is.
+func (p Principal) AccountType() string {
+	switch {
+	case p.HasRole("admin"):
+		return AccountAdmin
+	case p.HasRole("teacher"):
+		return AccountTeacher
+	default:
+		return AccountLearner
+	}
+}

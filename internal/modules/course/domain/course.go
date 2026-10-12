@@ -98,6 +98,9 @@ var (
 	ErrLanguageCode     = apperr.New("language.invalid_code", apperr.KindValidation)
 	ErrLanguageExists   = apperr.New("language.exists", apperr.KindConflict)
 	ErrLanguageNotFound = apperr.New("language.not_found", apperr.KindNotFound)
+	// ErrLearnerOnly: the learning app is for learner accounts (teachers and
+	// admins have their own workspaces; admins may only preview).
+	ErrLearnerOnly = apperr.New("auth.learner_only", apperr.KindForbidden)
 )
 
 // Lesson kinds.

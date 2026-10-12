@@ -263,3 +263,30 @@ func (h *Handler) SetUserStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	web.JSON(w, http.StatusOK, map[string]any{"ok": true})
 }
+
+// SetAccountType makes a user exactly one account type (learner | teacher |
+// admin). Admins can't change their own type, so they can't lock themselves out.
+func (h *Handler) SetAccountType(w http.ResponseWriter, r *http.Request) {
+	pr, ok := authn.FromContext(r.Context())
+	if !ok {
+		web.Error(w, r, apperr.ErrInternal)
+		return
+	}
+	userID := r.PathValue("id")
+	var in struct {
+		Type string `json:"type"`
+	}
+	if json.NewDecoder(r.Body).Decode(&in) != nil {
+		web.Error(w, r, apperr.ErrBadRequest)
+		return
+	}
+	if userID == pr.Subject {
+		web.Error(w, r, apperr.New("auth.own_account_type", apperr.KindValidation))
+		return
+	}
+	if err := h.svc.SetAccountType(r.Context(), userID, in.Type); err != nil {
+		web.Error(w, r, err)
+		return
+	}
+	web.JSON(w, http.StatusOK, map[string]any{"ok": true, "type": in.Type})
+}

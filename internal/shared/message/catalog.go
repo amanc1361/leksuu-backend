@@ -102,6 +102,21 @@ var catalog = map[string]map[string]string{
 		LocaleFa:  "احراز هویت الزامی است.",
 		LocaleCkb: "پشتڕاستکردنەوەی ناسنامە پێویستە.",
 	},
+	"auth.invalid_account_type": {
+		LocaleEn:  "Account type must be learner, teacher or admin.",
+		LocaleFa:  "نوعِ حساب باید یادگیرنده، معلم یا ادمین باشد.",
+		LocaleCkb: "جۆری هەژمار دەبێت فێرخواز، مامۆستا یان بەڕێوەبەر بێت.",
+	},
+	"auth.own_account_type": {
+		LocaleEn:  "You can't change your own account type.",
+		LocaleFa:  "نمی‌توانی نوعِ حسابِ خودت را عوض کنی.",
+		LocaleCkb: "ناتوانیت جۆری هەژماری خۆت بگۆڕیت.",
+	},
+	"auth.learner_only": {
+		LocaleEn:  "This is part of the learning app, which is for learner accounts.",
+		LocaleFa:  "این بخش مالِ اپِ یادگیری است و فقط برای حساب‌های یادگیرنده است.",
+		LocaleCkb: "ئەم بەشە بەشێکە لە ئەپی فێربوون و تەنها بۆ هەژماری فێرخوازە.",
+	},
 	"auth.forbidden": {
 		LocaleEn:  "You do not have permission for this action.",
 		LocaleFa:  "شما اجازه‌ی این عمل را ندارید.",

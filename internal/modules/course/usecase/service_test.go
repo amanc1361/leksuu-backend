@@ -566,3 +566,46 @@ func TestDisabledLanguageIsHiddenFromLearners(t *testing.T) {
 		t.Fatalf("public list should drop exactly the disabled one: all=%d public=%d", len(all), len(public))
 	}
 }
+
+// Admins preview lessons: answers are graded but nothing is recorded (no
+// attempt, no XP, no completion). Teachers can't use the learning app.
+func TestAdminPreviewRecordsNothingAndTeachersAreRefused(t *testing.T) {
+	ctx := context.Background()
+	courses := repo.NewMemoryCourseRepo()
+	rw := &countRewarder{}
+	s := usecase.NewService(courses, repo.NewMemoryProgressRepo(courses.LessonCourseID), rw, time.Now)
+	lwi, err := s.GetLesson(ctx, usecase.Viewer{UserID: "adm", Admin: true, Account: usecase.AccountAdmin}, "lesson-greetings")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ex *domain.Exercise
+	for _, it := range lwi.Items {
+		for i := range it.Exercises {
+			if it.Exercises[i].Type == "mcq" {
+				ex = &it.Exercises[i]
+			}
+		}
+	}
+	if ex == nil {
+		t.Fatal("fixture needs an mcq")
+	}
+	admin := usecase.Viewer{UserID: "adm", Admin: true, Account: usecase.AccountAdmin}
+	res, err := s.GradeExercise(ctx, admin, ex.ID, json.RawMessage(`{"choice":0}`))
+	if err != nil || !res.Preview || res.AwardedXP {
+		t.Fatalf("admin answer should be a graded preview: %+v %v", res, err)
+	}
+	comp, err := s.CompleteLesson(ctx, admin, "lesson-greetings")
+	if err != nil || !comp.Preview || comp.AwardedXP {
+		t.Fatalf("admin completion should be a preview: %+v %v", comp, err)
+	}
+	if sum, _ := s.CourseProgress(ctx, "adm", lwi.Lesson.CourseID); sum.CompletedLessons != 0 || rw.awards != 0 {
+		t.Fatalf("preview must record nothing: completed=%d awards=%d", sum.CompletedLessons, rw.awards)
+	}
+	teacher := usecase.Viewer{UserID: "tch", Account: usecase.AccountTeacher}
+	if _, err := s.GradeExercise(ctx, teacher, ex.ID, json.RawMessage(`{"choice":0}`)); err != domain.ErrLearnerOnly {
+		t.Fatalf("teacher answer: want ErrLearnerOnly, got %v", err)
+	}
+	if _, err := s.CompleteLesson(ctx, teacher, "lesson-greetings"); err != domain.ErrLearnerOnly {
+		t.Fatalf("teacher completion: want ErrLearnerOnly, got %v", err)
+	}
+}

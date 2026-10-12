@@ -177,7 +177,7 @@ func viewerOf(r *http.Request) usecase.Viewer {
 	if !ok {
 		return usecase.Viewer{}
 	}
-	return usecase.Viewer{UserID: p.Subject, Admin: p.HasRole("admin")}
+	return usecase.Viewer{UserID: p.Subject, Admin: p.HasRole("admin"), Account: p.AccountType()}
 }
 
 func (h *Handler) GetCourse(w http.ResponseWriter, r *http.Request) {
@@ -222,6 +222,10 @@ func mediaQInt(r *http.Request, key string, def int) int {
 }
 
 func (h *Handler) MediaLibrary(w http.ResponseWriter, r *http.Request) {
+	if !learnerRequest(r) {
+		web.Error(w, r, domain.ErrLearnerOnly)
+		return
+	}
 	if h.premium != nil {
 		pr, ok := authn.FromContext(r.Context())
 		if !ok {
@@ -279,6 +283,9 @@ func (h *Handler) CompleteLesson(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := map[string]any{"status": domain.StatusCompleted, "awarded_xp": res.AwardedXP, "passed": res.Passed}
+	if res.Preview {
+		out["preview"] = true
+	}
 	if res.Checkpoint {
 		out["checkpoint"] = true
 		out["score"] = res.Score
@@ -308,10 +315,18 @@ func (h *Handler) AnswerExercise(w http.ResponseWriter, r *http.Request) {
 		web.Error(w, r, err)
 		return
 	}
-	web.JSON(w, http.StatusOK, map[string]any{"correct": res.Correct, "score": res.Score, "solution": res.Solution, "first_try": res.FirstTry, "awarded_xp": res.AwardedXP})
+	out := map[string]any{"correct": res.Correct, "score": res.Score, "solution": res.Solution, "first_try": res.FirstTry, "awarded_xp": res.AwardedXP}
+	if res.Preview {
+		out["preview"] = true
+	}
+	web.JSON(w, http.StatusOK, out)
 }
 
 func (h *Handler) CourseProgress(w http.ResponseWriter, r *http.Request) {
+	if !learnerRequest(r) {
+		web.Error(w, r, domain.ErrLearnerOnly)
+		return
+	}
 	p, ok := authn.FromContext(r.Context())
 	if !ok {
 		web.Error(w, r, apperr.ErrInternal)
@@ -331,6 +346,10 @@ func (h *Handler) CourseProgress(w http.ResponseWriter, r *http.Request) {
 // QuickPractice serves a small set of random gradeable exercises for a light
 // review session. Answer keys are stripped via exerciseView, same as browse.
 func (h *Handler) QuickPractice(w http.ResponseWriter, r *http.Request) {
+	if !learnerRequest(r) {
+		web.Error(w, r, domain.ErrLearnerOnly)
+		return
+	}
 	p, ok := authn.FromContext(r.Context())
 	if !ok {
 		web.Error(w, r, apperr.ErrInternal)
@@ -364,4 +383,11 @@ func (h *Handler) ListLanguages(w http.ResponseWriter, r *http.Request) {
 		out = append(out, map[string]any{"code": l.Code, "position": l.Position})
 	}
 	web.JSON(w, http.StatusOK, map[string]any{"languages": out})
+}
+
+// learnerRequest: true for anonymous callers and learner accounts. Teacher and
+// admin accounts have their own workspaces and get no learner progress views.
+func learnerRequest(r *http.Request) bool {
+	p, ok := authn.FromContext(r.Context())
+	return !ok || p.AccountType() == authn.AccountLearner
 }

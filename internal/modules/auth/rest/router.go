@@ -15,6 +15,7 @@ func (h *Handler) Mount(mux *http.ServeMux, prefix string, authn *Authenticator)
 	mux.Handle("GET "+prefix+"/admin/users", authn.RequireRole("admin", http.HandlerFunc(h.ListUsers)))
 	mux.Handle("GET "+prefix+"/admin/users/{id}", authn.RequireRole("admin", http.HandlerFunc(h.UserDetail)))
 	mux.Handle("PUT "+prefix+"/admin/users/{id}/roles", authn.RequireRole("admin", http.HandlerFunc(h.SetUserRole)))
+	mux.Handle("PUT "+prefix+"/admin/users/{id}/account-type", authn.RequireRole("admin", http.HandlerFunc(h.SetAccountType)))
 	mux.Handle("POST "+prefix+"/admin/users/bulk-roles", authn.RequireRole("admin", http.HandlerFunc(h.BulkSetUserRole)))
 	mux.Handle("PUT "+prefix+"/admin/users/{id}/status", authn.RequireRole("admin", http.HandlerFunc(h.SetUserStatus)))
 }
