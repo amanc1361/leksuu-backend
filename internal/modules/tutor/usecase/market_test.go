@@ -221,3 +221,20 @@ func TestUnpricedTeacherCannotBeBooked(t *testing.T) {
 		t.Fatalf("want tutor.price_not_set, got %v", err)
 	}
 }
+
+// The teacher's own profile shows the price they set.
+func TestTeacherSeesOwnPrice(t *testing.T) {
+	ctx := context.Background()
+	m := newMarket(t)
+	_ = m.svc.LinkUser(ctx, "tutor-sara", "sara-user")
+	if err := m.svc.SetMyPrice(ctx, "sara-user", 250000); err != nil {
+		t.Fatal(err)
+	}
+	me, err := m.svc.MyTutorProfile(ctx, "sara-user")
+	if err != nil || me.SessionPriceToman != 250000 {
+		t.Fatalf("own profile price = %+v %v", me, err)
+	}
+	if err := m.svc.SetMyPrice(ctx, "sara-user", 0); codeOf(err) != "tutor.invalid_price" {
+		t.Fatalf("zero price: want tutor.invalid_price, got %v", err)
+	}
+}

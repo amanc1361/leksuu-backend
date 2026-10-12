@@ -117,6 +117,11 @@ var catalog = map[string]map[string]string{
 		LocaleFa:  "این بخش مالِ اپِ یادگیری است و فقط برای حساب‌های یادگیرنده است.",
 		LocaleCkb: "ئەم بەشە بەشێکە لە ئەپی فێربوون و تەنها بۆ هەژماری فێرخوازە.",
 	},
+	"billing.classes_per_session": {
+		LocaleEn:  "Online classes are now paid per session — choose a teacher and book a session.",
+		LocaleFa:  "کلاس‌های آنلاین حالا جلسه‌ای پرداخت می‌شوند — معلم را انتخاب کن و جلسه رزرو کن.",
+		LocaleCkb: "پۆلە ئۆنلاینەکان ئێستا بە دانیشتن پارە دەدرێن — مامۆستا هەڵبژێرە و دانیشتن بگرە.",
+	},
 	"tutor.payment_required": {
 		LocaleEn:  "Pay for this session to book it.",
 		LocaleFa:  "برای رزروِ این جلسه باید هزینه‌اش را پرداخت کنی.",

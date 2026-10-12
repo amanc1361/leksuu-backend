@@ -267,10 +267,10 @@ func TestSessionPaymentCallback(t *testing.T) {
 			authority = a
 		}
 	}
-	if got := s.HandleCallback(ctx, authority, "OK"); got != "/ok" {
+	if got := s.HandleCallback(ctx, authority, "OK"); got != "/ok?kind=session" {
 		t.Fatalf("paid session → %q", got)
 	}
-	if got := s.HandleCallback(ctx, authority, "OK"); got != "/ok" || len(f.calls) != 1 || f.calls[0] != "co-1:true" {
+	if got := s.HandleCallback(ctx, authority, "OK"); got != "/ok?kind=session" || len(f.calls) != 1 || f.calls[0] != "co-1:true" {
 		t.Fatalf("replay must not settle twice: %q %v", got, f.calls)
 	}
 	if _, err := s.StartSessionPayment(ctx, "u", "co-2", 200000, "session"); err != nil {
@@ -281,7 +281,15 @@ func TestSessionPaymentCallback(t *testing.T) {
 			authority = a
 		}
 	}
-	if got := s.HandleCallback(ctx, authority, "NOK"); got != "/fail" || f.calls[len(f.calls)-1] != "co-2:false" {
+	if got := s.HandleCallback(ctx, authority, "NOK"); got != "/fail?kind=session" || f.calls[len(f.calls)-1] != "co-2:false" {
 		t.Fatalf("failed session → %q %v", got, f.calls)
+	}
+}
+
+// Classes are sold per session: no new class subscriptions.
+func TestNoNewClassSubscriptions(t *testing.T) {
+	s := NewService(newFake(), okProvider{}, &fakeWallet{}, Config{})
+	if _, err := s.Subscribe(context.Background(), "u", domain.ProductClasses, "monthly"); err == nil {
+		t.Fatal("buying a class subscription must be refused")
 	}
 }

@@ -320,3 +320,13 @@ func (s *Service) withPrices(ctx context.Context, ts []domain.Tutor) []domain.Tu
 	}
 	return ts
 }
+
+// MyTutorProfile is the signed-in teacher's profile including their price.
+func (s *Service) MyTutorProfile(ctx context.Context, userID string) (*domain.Tutor, error) {
+	t, err := s.TutorForUser(ctx, userID)
+	if err != nil || t == nil {
+		return t, err
+	}
+	withPrice := s.withPrices(ctx, []domain.Tutor{*t})[0]
+	return &withPrice, nil
+}

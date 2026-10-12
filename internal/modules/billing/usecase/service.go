@@ -284,6 +284,11 @@ func (s *Service) Subscribe(ctx context.Context, userID, product, period string)
 	if product == "" {
 		product = domain.ProductCourses
 	}
+	// Online classes are paid per session now; existing class subscriptions
+	// keep working until they end, but no new ones are sold.
+	if product == domain.ProductClasses {
+		return "", apperr.New("billing.classes_per_session", apperr.KindValidation)
+	}
 	plan, ok := s.planFor(ctx, product, period)
 	if !ok {
 		return "", apperr.ErrBadRequest
@@ -538,7 +543,7 @@ func (s *Service) UserBillingDetail(ctx context.Context, userID string) (*UserBi
 // tutor module, which books the session (or releases the held slot).
 func (s *Service) handleSessionCallback(ctx context.Context, pay *domain.Payment, status string) string {
 	if pay.Status == "paid" {
-		return s.cfg.SuccessURL // already settled (callback replayed)
+		return withQuery(s.cfg.SuccessURL, "kind=session") // already settled (callback replayed)
 	}
 	paid := false
 	if strings.EqualFold(status, "OK") {
@@ -552,11 +557,19 @@ func (s *Service) handleSessionCallback(ctx context.Context, pay *domain.Payment
 	}
 	if s.sessions != nil {
 		if err := s.sessions.FulfillCheckout(ctx, pay.PlanID, paid); err != nil {
-			return s.cfg.FailURL
+			return withQuery(s.cfg.FailURL, "kind=session")
 		}
 	}
 	if paid {
-		return s.cfg.SuccessURL
+		return withQuery(s.cfg.SuccessURL, "kind=session")
 	}
-	return s.cfg.FailURL
+	return withQuery(s.cfg.FailURL, "kind=session")
+}
+
+// withQuery appends a query parameter to a URL that may already have some.
+func withQuery(u, kv string) string {
+	if strings.Contains(u, "?") {
+		return u + "&" + kv
+	}
+	return u + "?" + kv
 }

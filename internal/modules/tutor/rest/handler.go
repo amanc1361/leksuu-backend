@@ -174,7 +174,7 @@ func (h *Handler) TutorMe(w http.ResponseWriter, r *http.Request) {
 		web.Error(w, r, apperr.ErrInternal)
 		return
 	}
-	t, err := h.svc.TutorForUser(r.Context(), p.Subject)
+	t, err := h.svc.MyTutorProfile(r.Context(), p.Subject)
 	if err != nil {
 		web.Error(w, r, err)
 		return
