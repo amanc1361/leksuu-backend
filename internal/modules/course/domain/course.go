@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"github.com/leksuu/platform/internal/shared/apperr"
 	"strings"
 )
 
@@ -80,18 +81,24 @@ func KindOrDefault(k string) string {
 // used when a course has none recorded.
 const DefaultLanguage = "en"
 
-// SupportedLanguages lists the course target languages, in display order.
+// SupportedLanguages are the initial target languages (the migration and the
+// in-memory store seed them); the live list is the admin-managed languages table.
 var SupportedLanguages = []string{"en", "de", "fr", "tr"}
 
-// IsSupportedLanguage reports whether code is a course target language.
-func IsSupportedLanguage(code string) bool {
-	for _, l := range SupportedLanguages {
-		if l == code {
-			return true
-		}
-	}
-	return false
+// Language is a target language the platform can teach. Disabled languages
+// keep their courses but are hidden from learners.
+type Language struct {
+	Code     string // ISO 639 code, 2–3 lowercase letters (en, de, fr, tr…)
+	Enabled  bool
+	Position int
 }
+
+// Language errors.
+var (
+	ErrLanguageCode     = apperr.New("language.invalid_code", apperr.KindValidation)
+	ErrLanguageExists   = apperr.New("language.exists", apperr.KindConflict)
+	ErrLanguageNotFound = apperr.New("language.not_found", apperr.KindNotFound)
+)
 
 // Lesson kinds.
 const (

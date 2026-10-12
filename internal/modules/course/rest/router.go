@@ -24,6 +24,7 @@ type Premium interface {
 // lessons is withheld per viewer); progress requires auth.
 func (h *Handler) Mount(mux *http.ServeMux, prefix string, guard Guard) {
 	mux.HandleFunc("GET "+prefix+"/courses", h.ListCourses)
+	mux.HandleFunc("GET "+prefix+"/languages", h.ListLanguages)
 	mux.Handle("GET "+prefix+"/courses/{id}", guard.Optional(http.HandlerFunc(h.GetCourse)))
 	mux.Handle("GET "+prefix+"/lessons/{id}", guard.Optional(http.HandlerFunc(h.GetLesson)))
 	mux.Handle("GET "+prefix+"/media-library", guard.Require(http.HandlerFunc(h.MediaLibrary)))

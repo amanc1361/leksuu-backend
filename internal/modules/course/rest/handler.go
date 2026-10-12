@@ -351,3 +351,17 @@ func (h *Handler) QuickPractice(w http.ResponseWriter, r *http.Request) {
 
 // lessonKind exposes a lesson's kind ("lesson" or "checkpoint").
 func lessonKind(k string) string { return domain.KindOrDefault(k) }
+
+// ListLanguages returns the target languages learners can choose, in order.
+func (h *Handler) ListLanguages(w http.ResponseWriter, r *http.Request) {
+	langs, err := h.svc.Languages(r.Context(), false)
+	if err != nil {
+		web.Error(w, r, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(langs))
+	for _, l := range langs {
+		out = append(out, map[string]any{"code": l.Code, "position": l.Position})
+	}
+	web.JSON(w, http.StatusOK, map[string]any{"languages": out})
+}

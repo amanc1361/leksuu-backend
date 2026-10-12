@@ -177,10 +177,25 @@ var catalog = map[string]map[string]string{
 		LocaleFa:  "دریافت فایل در حال حاضر ممکن نشد. دوباره تلاش کنید.",
 		LocaleCkb: "ئێستا فایلەکە دانەبەزێنرا. تکایە دووبارە هەوڵ بدەرەوە.",
 	},
+	"language.invalid_code": {
+		LocaleEn:  "Use a 2–3 letter ISO language code, e.g. it, es, nl.",
+		LocaleFa:  "کدِ زبان باید ۲ یا ۳ حرفِ لاتینِ کوچک باشد، مثلاً it یا nl.",
+		LocaleCkb: "کۆدی زمان دەبێت ٢ یان ٣ پیتی لاتینی بچووک بێت، بۆ نموونە it یان nl.",
+	},
+	"language.exists": {
+		LocaleEn:  "This language is already in the list.",
+		LocaleFa:  "این زبان از قبل در فهرست هست.",
+		LocaleCkb: "ئەم زمانە پێشتر لە لیستەکەدایە.",
+	},
+	"language.not_found": {
+		LocaleEn:  "Language not found.",
+		LocaleFa:  "زبان پیدا نشد.",
+		LocaleCkb: "زمان نەدۆزرایەوە.",
+	},
 	"user.invalid_target_lang": {
-		LocaleEn:  "That language isn't available yet. Choose English, German, French or Turkish.",
-		LocaleFa:  "این زبان هنوز در دسترس نیست. انگلیسی، آلمانی، فرانسوی یا ترکی را انتخاب کن.",
-		LocaleCkb: "ئەم زمانە هێشتا بەردەست نییە. ئینگلیزی، ئەڵمانی، فەڕەنسی یان تورکی هەڵبژێرە.",
+		LocaleEn:  "That language isn't available. Choose one of the languages offered.",
+		LocaleFa:  "این زبان در دسترس نیست. یکی از زبان‌های موجود را انتخاب کن.",
+		LocaleCkb: "ئەم زمانە بەردەست نییە. یەکێک لە زمانە بەردەستەکان هەڵبژێرە.",
 	},
 	"user.invalid_cefr": {
 		LocaleEn:  "Invalid level.",

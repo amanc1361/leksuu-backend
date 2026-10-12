@@ -5,6 +5,10 @@ import "context"
 // CourseRepository abstracts the learning tree. List/order methods MUST return
 // lessons and items ordered by Position.
 type CourseRepository interface {
+	// Languages returns every target language, ordered by position then code.
+	Languages(ctx context.Context) ([]Language, error)
+	// SaveLanguage inserts or updates a language.
+	SaveLanguage(ctx context.Context, l Language) error
 	ListCourses(ctx context.Context, language, cefr string) ([]Course, error)
 	Course(ctx context.Context, id string) (*Course, error)
 	Lessons(ctx context.Context, courseID string) ([]Lesson, error)

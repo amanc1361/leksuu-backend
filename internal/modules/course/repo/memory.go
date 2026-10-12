@@ -18,6 +18,7 @@ import (
 
 type MemoryCourseRepo struct {
 	mu           sync.RWMutex
+	languages    map[string]domain.Language
 	courses      []domain.Course
 	units        map[string][]domain.Unit             // courseID -> units (chapters)
 	lessons      map[string][]domain.Lesson           // courseID -> lessons
@@ -32,6 +33,7 @@ func raw(s string) json.RawMessage { return json.RawMessage(s) }
 
 func NewMemoryCourseRepo() *MemoryCourseRepo {
 	r := &MemoryCourseRepo{
+		languages:    map[string]domain.Language{},
 		units:        map[string][]domain.Unit{},
 		lessons:      map[string][]domain.Lesson{},
 		items:        map[string][]domain.LessonItem{},
@@ -39,6 +41,9 @@ func NewMemoryCourseRepo() *MemoryCourseRepo {
 		lessonCourse: map[string]string{},
 		accessRules:  map[string]domain.AccessRule{},
 		translations: map[string]domain.ContentTranslation{},
+	}
+	for i, code := range domain.SupportedLanguages {
+		r.languages[code] = domain.Language{Code: code, Enabled: true, Position: i + 1}
 	}
 	r.seed()
 	return r
@@ -1118,4 +1123,29 @@ func (r *MemoryCourseRepo) ListAccessRules(_ context.Context) ([]domain.AccessRu
 		out = append(out, ar)
 	}
 	return out, nil
+}
+
+// Languages returns every target language, ordered by position then code.
+func (r *MemoryCourseRepo) Languages(_ context.Context) ([]domain.Language, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]domain.Language, 0, len(r.languages))
+	for _, l := range r.languages {
+		out = append(out, l)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Position != out[j].Position {
+			return out[i].Position < out[j].Position
+		}
+		return out[i].Code < out[j].Code
+	})
+	return out, nil
+}
+
+// SaveLanguage inserts or updates a language.
+func (r *MemoryCourseRepo) SaveLanguage(_ context.Context, l domain.Language) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.languages[l.Code] = l
+	return nil
 }

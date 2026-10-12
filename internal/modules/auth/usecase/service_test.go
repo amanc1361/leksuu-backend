@@ -263,3 +263,22 @@ func TestUpdateProfileAcceptsOnlySupportedTargetLanguages(t *testing.T) {
 		}
 	}
 }
+
+// When wired to the languages table, the profile accepts exactly the enabled
+// languages — including ones added by an admin.
+func TestUpdateProfileFollowsLanguageTable(t *testing.T) {
+	s := newService()
+	ctx := context.Background()
+	enabled := map[string]bool{"en": true, "it": true}
+	s.SetTargetLangCheck(func(_ context.Context, code string) (bool, error) { return enabled[code], nil })
+	u, err := s.Register(ctx, usecase.RegisterInput{Email: "tbl@x.com", Password: "pw", DisplayName: "T"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateProfile(ctx, u.ID, usecase.UpdateProfileInput{TargetLang: "it"}); err != nil {
+		t.Fatalf("admin-added language should be accepted: %v", err)
+	}
+	if _, err := s.UpdateProfile(ctx, u.ID, usecase.UpdateProfileInput{TargetLang: "de"}); err != domain.ErrInvalidTargetLang {
+		t.Fatalf("language not enabled in the table should be rejected, got %v", err)
+	}
+}

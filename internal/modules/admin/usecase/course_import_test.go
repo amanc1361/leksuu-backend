@@ -439,3 +439,41 @@ func TestCreateCourseRejectsUnsupportedLanguage(t *testing.T) {
 		t.Fatal("an unsupported course language must be rejected")
 	}
 }
+
+// Admins add a language (it starts disabled, last in order), enable/disable and
+// reorder it; codes are validated and duplicates refused.
+func TestLanguageLifecycle(t *testing.T) {
+	ctx := context.Background()
+	repo := courserepo.NewMemoryCourseRepo()
+	svc := NewService(repo, nil)
+	for _, bad := range []string{"", "x", "italian", "it-IT", "1t"} {
+		if _, err := svc.CreateLanguage(ctx, bad); err != coursedomain.ErrLanguageCode {
+			t.Fatalf("code %q should be rejected, got %v", bad, err)
+		}
+	}
+	it, err := svc.CreateLanguage(ctx, " It ")
+	if err != nil || it.Code != "it" || it.Enabled || it.Position != 5 {
+		t.Fatalf("new language: %+v %v", it, err)
+	}
+	if _, err := svc.CreateLanguage(ctx, "it"); err != coursedomain.ErrLanguageExists {
+		t.Fatalf("duplicate should be refused, got %v", err)
+	}
+	// A course can be prepared for the (still disabled) language.
+	if _, _, err := svc.CreateCourse(ctx, CreateCourseInput{Language: "it", CEFR: "A1", Title: "Italiano A1"}); err != nil {
+		t.Fatalf("course for a disabled language should be allowed: %v", err)
+	}
+	on, pos := true, 0
+	if l, err := svc.UpdateLanguage(ctx, "it", &on, &pos); err != nil || !l.Enabled || l.Position != 0 {
+		t.Fatalf("enable+move: %+v %v", l, err)
+	}
+	langs, _ := svc.Languages(ctx)
+	if langs[0].Code != "it" {
+		t.Fatalf("position 0 should sort first: %+v", langs)
+	}
+	if _, err := svc.UpdateLanguage(ctx, "xx", &on, nil); err != coursedomain.ErrLanguageNotFound {
+		t.Fatalf("unknown language: %v", err)
+	}
+	if _, _, err := svc.CreateCourse(ctx, CreateCourseInput{Language: "xx", CEFR: "A1", Title: "?"}); err == nil {
+		t.Fatal("a course needs a known language")
+	}
+}

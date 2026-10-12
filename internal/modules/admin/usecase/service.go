@@ -6,6 +6,7 @@ package usecase
 import (
 	"context"
 	"encoding/json"
+	"regexp"
 	"strings"
 
 	coursedomain "github.com/leksuu/platform/internal/modules/course/domain"
@@ -16,6 +17,8 @@ import (
 // Repository is the content write+read surface authoring needs (satisfied by the
 // shared content store / Postgres repo).
 type Repository interface {
+	Languages(ctx context.Context) ([]coursedomain.Language, error)
+	SaveLanguage(ctx context.Context, l coursedomain.Language) error
 	ListAllCourses(ctx context.Context) ([]coursedomain.Course, error)
 	CreateCourse(ctx context.Context, c *coursedomain.Course) error
 	Course(ctx context.Context, id string) (*coursedomain.Course, error)
@@ -79,7 +82,7 @@ type CreateCourseInput struct{ Language, CEFR, Title, Description, ImageURL, Sou
 // from that source earlier is returned with reused=true, so retrying an
 // interrupted "new course" import never creates a second course.
 func (s *Service) CreateCourse(ctx context.Context, in CreateCourseInput) (*coursedomain.Course, bool, error) {
-	if in.Language == "" || in.Title == "" || !coursedomain.IsSupportedLanguage(in.Language) {
+	if in.Language == "" || in.Title == "" || !s.languageKnown(ctx, in.Language) {
 		return nil, false, apperr.ErrBadRequest
 	}
 	sourceID := strings.TrimSpace(in.SourceID)
@@ -623,4 +626,77 @@ func (s *Service) ensureMediaLesson(ctx context.Context) (string, error) {
 		return "", err
 	}
 	return l.ID, nil
+}
+
+var languageCode = regexp.MustCompile(`^[a-z]{2,3}$`)
+
+// languageKnown reports whether code is in the languages table (enabled or
+// not: content for a disabled language can be prepared before it goes live).
+func (s *Service) languageKnown(ctx context.Context, code string) bool {
+	langs, err := s.repo.Languages(ctx)
+	if err != nil {
+		return false
+	}
+	for _, l := range langs {
+		if l.Code == code {
+			return true
+		}
+	}
+	return false
+}
+
+// Languages lists every target language (enabled and disabled) for admins.
+func (s *Service) Languages(ctx context.Context) ([]coursedomain.Language, error) {
+	return s.repo.Languages(ctx)
+}
+
+// CreateLanguage adds a target language. It starts disabled so its courses can
+// be built and checked before learners see it, and is placed last.
+func (s *Service) CreateLanguage(ctx context.Context, code string) (*coursedomain.Language, error) {
+	code = strings.ToLower(strings.TrimSpace(code))
+	if !languageCode.MatchString(code) {
+		return nil, coursedomain.ErrLanguageCode
+	}
+	langs, err := s.repo.Languages(ctx)
+	if err != nil {
+		return nil, err
+	}
+	last := 0
+	for _, l := range langs {
+		if l.Code == code {
+			return nil, coursedomain.ErrLanguageExists
+		}
+		if l.Position > last {
+			last = l.Position
+		}
+	}
+	l := coursedomain.Language{Code: code, Enabled: false, Position: last + 1}
+	if err := s.repo.SaveLanguage(ctx, l); err != nil {
+		return nil, err
+	}
+	return &l, nil
+}
+
+// UpdateLanguage enables/disables a language and/or moves it in the order.
+func (s *Service) UpdateLanguage(ctx context.Context, code string, enabled *bool, position *int) (*coursedomain.Language, error) {
+	langs, err := s.repo.Languages(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, l := range langs {
+		if l.Code != code {
+			continue
+		}
+		if enabled != nil {
+			l.Enabled = *enabled
+		}
+		if position != nil {
+			l.Position = *position
+		}
+		if err := s.repo.SaveLanguage(ctx, l); err != nil {
+			return nil, err
+		}
+		return &l, nil
+	}
+	return nil, coursedomain.ErrLanguageNotFound
 }

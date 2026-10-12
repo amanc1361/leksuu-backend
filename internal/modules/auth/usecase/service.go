@@ -19,16 +19,19 @@ type Config struct {
 
 // Service implements the authentication use cases.
 type Service struct {
-	users       domain.UserRepository
-	tokens      domain.TokenRepository
-	hasher      Hasher
-	issuer      AccessTokenIssuer
-	refresh     RefreshTokenFactory
-	clock       Clock
-	cfg         Config
-	adminEmails map[string]bool
-	subLookup   SubscriptionLookup
-	onChange    func(userID string)
+	// targetLangOK, when set, decides which target languages a learner may
+	// pick (the admin-managed languages table). Unset: the built-in list.
+	targetLangOK func(ctx context.Context, code string) (bool, error)
+	users        domain.UserRepository
+	tokens       domain.TokenRepository
+	hasher       Hasher
+	issuer       AccessTokenIssuer
+	refresh      RefreshTokenFactory
+	clock        Clock
+	cfg          Config
+	adminEmails  map[string]bool
+	subLookup    SubscriptionLookup
+	onChange     func(userID string)
 }
 
 // OnAccountChange registers a callback run after a user's status or roles
@@ -209,7 +212,14 @@ func (s *Service) UpdateProfile(ctx context.Context, userID string, in UpdatePro
 		f.NativeLang = in.NativeLang
 	}
 	if in.TargetLang != "" {
-		if !domain.IsSupportedTargetLang(in.TargetLang) {
+		ok := domain.IsSupportedTargetLang(in.TargetLang)
+		if s.targetLangOK != nil {
+			var err error
+			if ok, err = s.targetLangOK(ctx, in.TargetLang); err != nil {
+				return nil, err
+			}
+		}
+		if !ok {
 			return nil, domain.ErrInvalidTargetLang
 		}
 		f.TargetLang = in.TargetLang
@@ -548,4 +558,10 @@ func validEmail(e string) bool {
 	at := strings.LastIndexByte(e, '@')
 	domainPart := e[at+1:]
 	return at > 0 && strings.Contains(domainPart, ".") && !strings.HasPrefix(domainPart, ".") && !strings.HasSuffix(domainPart, ".")
+}
+
+// SetTargetLangCheck makes profile updates validate the chosen target
+// language against the admin-managed languages (enabled ones only).
+func (s *Service) SetTargetLangCheck(check func(ctx context.Context, code string) (bool, error)) {
+	s.targetLangOK = check
 }

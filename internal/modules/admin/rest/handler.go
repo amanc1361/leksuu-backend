@@ -629,3 +629,56 @@ func (h *Handler) SaveTranslations(w http.ResponseWriter, r *http.Request) {
 	}
 	web.JSON(w, http.StatusOK, map[string]any{"saved": saved, "deleted": deleted})
 }
+
+func languageView(l coursedomain.Language) map[string]any {
+	return map[string]any{"code": l.Code, "enabled": l.Enabled, "position": l.Position}
+}
+
+// ListLanguages lists every target language (enabled and disabled).
+func (h *Handler) ListLanguages(w http.ResponseWriter, r *http.Request) {
+	langs, err := h.svc.Languages(r.Context())
+	if err != nil {
+		web.Error(w, r, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(langs))
+	for _, l := range langs {
+		out = append(out, languageView(l))
+	}
+	web.JSON(w, http.StatusOK, map[string]any{"languages": out})
+}
+
+// CreateLanguage adds a target language (created disabled).
+func (h *Handler) CreateLanguage(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Code string `json:"code"`
+	}
+	if json.NewDecoder(r.Body).Decode(&in) != nil {
+		web.Error(w, r, apperr.ErrBadRequest)
+		return
+	}
+	l, err := h.svc.CreateLanguage(r.Context(), in.Code)
+	if err != nil {
+		web.Error(w, r, err)
+		return
+	}
+	web.JSON(w, http.StatusCreated, languageView(*l))
+}
+
+// UpdateLanguage enables/disables a language or changes its position.
+func (h *Handler) UpdateLanguage(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Enabled  *bool `json:"enabled"`
+		Position *int  `json:"position"`
+	}
+	if json.NewDecoder(r.Body).Decode(&in) != nil {
+		web.Error(w, r, apperr.ErrBadRequest)
+		return
+	}
+	l, err := h.svc.UpdateLanguage(r.Context(), r.PathValue("code"), in.Enabled, in.Position)
+	if err != nil {
+		web.Error(w, r, err)
+		return
+	}
+	web.JSON(w, http.StatusOK, languageView(*l))
+}

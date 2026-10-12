@@ -202,6 +202,8 @@ func New(cfg config.Config) (*App, error) {
 		Guard:    authModule.Authenticator(), // protected routes reuse auth middleware
 		Clock:    time.Now,
 	})
+	// A learner's target language must be one the admin has enabled.
+	authModule.Service().SetTargetLangCheck(courseModule.Service().LanguageEnabled)
 	billingModule.Service().SetAccessResolver(lessonAccessResolver{courseModule.Service()})
 	// Locked lesson content is withheld, graded and completed only with access.
 	courseModule.Service().SetEntitlements(billingModule.Service())

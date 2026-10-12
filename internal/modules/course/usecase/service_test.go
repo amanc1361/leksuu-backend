@@ -533,3 +533,36 @@ func TestGetLessonCarriesCourseLanguage(t *testing.T) {
 		t.Fatalf("lesson language %q, course language %q", lwi.Language, c.Language)
 	}
 }
+
+// Disabling a language hides its courses from learners and from the public
+// language list; learners can only pick enabled languages.
+func TestDisabledLanguageIsHiddenFromLearners(t *testing.T) {
+	ctx := context.Background()
+	courses := repo.NewMemoryCourseRepo()
+	s := usecase.NewService(courses, repo.NewMemoryProgressRepo(courses.LessonCourseID), nil, time.Now)
+	before, _ := s.ListCourses(ctx, "", "")
+	if len(before) == 0 {
+		t.Fatal("fixture should have courses")
+	}
+	lang := before[0].Language
+	if ok, _ := s.LanguageEnabled(ctx, lang); !ok {
+		t.Fatalf("%s should start enabled", lang)
+	}
+	if err := courses.SaveLanguage(ctx, domain.Language{Code: lang, Enabled: false, Position: 1}); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := s.ListCourses(ctx, "", "")
+	for _, c := range after {
+		if c.Language == lang {
+			t.Fatalf("course %s of disabled %s still listed", c.ID, lang)
+		}
+	}
+	if ok, _ := s.LanguageEnabled(ctx, lang); ok {
+		t.Fatal("disabled language must not be selectable")
+	}
+	public, _ := s.Languages(ctx, false)
+	all, _ := s.Languages(ctx, true)
+	if len(all) != len(public)+1 {
+		t.Fatalf("public list should drop exactly the disabled one: all=%d public=%d", len(all), len(public))
+	}
+}

@@ -236,7 +236,66 @@ type ProgressSummary struct {
 
 // ListCourses returns published courses, optionally filtered by language/level.
 func (s *Service) ListCourses(ctx context.Context, language, cefr string) ([]domain.Course, error) {
-	return s.courses.ListCourses(ctx, language, cefr)
+	courses, err := s.courses.ListCourses(ctx, language, cefr)
+	if err != nil {
+		return nil, err
+	}
+	// Learners only see courses of enabled languages; a disabled language's
+	// courses stay in the catalog for admins (and for preparing content).
+	enabled, err := s.enabledLanguages(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := courses[:0]
+	for _, c := range courses {
+		if enabled[c.Language] {
+			out = append(out, c)
+		}
+	}
+	return out, nil
+}
+
+// Languages returns the target languages learners can choose (enabled only),
+// or every language when all is true.
+func (s *Service) Languages(ctx context.Context, all bool) ([]domain.Language, error) {
+	langs, err := s.courses.Languages(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if all {
+		return langs, nil
+	}
+	out := make([]domain.Language, 0, len(langs))
+	for _, l := range langs {
+		if l.Enabled {
+			out = append(out, l)
+		}
+	}
+	return out, nil
+}
+
+// LanguageEnabled reports whether learners may study code (used to validate a
+// learner's chosen target language).
+func (s *Service) LanguageEnabled(ctx context.Context, code string) (bool, error) {
+	enabled, err := s.enabledLanguages(ctx)
+	if err != nil {
+		return false, err
+	}
+	return enabled[code], nil
+}
+
+func (s *Service) enabledLanguages(ctx context.Context) (map[string]bool, error) {
+	langs, err := s.courses.Languages(ctx)
+	if err != nil {
+		return nil, err
+	}
+	m := make(map[string]bool, len(langs))
+	for _, l := range langs {
+		if l.Enabled {
+			m[l.Code] = true
+		}
+	}
+	return m, nil
 }
 
 // PracticeExercises returns up to n exercises for a quick standalone practice

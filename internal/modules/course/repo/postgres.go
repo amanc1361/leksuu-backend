@@ -896,3 +896,30 @@ func (r *PostgresCourseRepo) DeleteContentTranslation(ctx context.Context, sourc
 	_, err := r.pool.Exec(ctx, `DELETE FROM content_translations WHERE source_hash=$1 AND locale=$2`, sourceHash, locale)
 	return err
 }
+
+// Languages returns every target language, ordered by position then code.
+func (r *PostgresCourseRepo) Languages(ctx context.Context) ([]domain.Language, error) {
+	rows, err := r.pool.Query(ctx, `SELECT code, enabled, position FROM languages ORDER BY position, code`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []domain.Language
+	for rows.Next() {
+		var l domain.Language
+		if err := rows.Scan(&l.Code, &l.Enabled, &l.Position); err != nil {
+			return nil, err
+		}
+		out = append(out, l)
+	}
+	return out, rows.Err()
+}
+
+// SaveLanguage inserts or updates a language.
+func (r *PostgresCourseRepo) SaveLanguage(ctx context.Context, l domain.Language) error {
+	_, err := r.pool.Exec(ctx,
+		`INSERT INTO languages (code, enabled, position) VALUES ($1, $2, $3)
+		 ON CONFLICT (code) DO UPDATE SET enabled = EXCLUDED.enabled, position = EXCLUDED.position`,
+		l.Code, l.Enabled, l.Position)
+	return err
+}
