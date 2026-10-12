@@ -16,4 +16,5 @@ var (
 	ErrUnauthenticated    = apperr.New("auth.unauthenticated", apperr.KindUnauthorized)
 	ErrForbidden          = apperr.New("auth.forbidden", apperr.KindForbidden)
 	ErrInvalidCEFR        = apperr.New("user.invalid_cefr", apperr.KindValidation)
+	ErrInvalidTargetLang  = apperr.New("user.invalid_target_lang", apperr.KindValidation)
 )

@@ -177,6 +177,11 @@ var catalog = map[string]map[string]string{
 		LocaleFa:  "دریافت فایل در حال حاضر ممکن نشد. دوباره تلاش کنید.",
 		LocaleCkb: "ئێستا فایلەکە دانەبەزێنرا. تکایە دووبارە هەوڵ بدەرەوە.",
 	},
+	"user.invalid_target_lang": {
+		LocaleEn:  "That language isn't available yet. Choose English, German, French or Turkish.",
+		LocaleFa:  "این زبان هنوز در دسترس نیست. انگلیسی، آلمانی، فرانسوی یا ترکی را انتخاب کن.",
+		LocaleCkb: "ئەم زمانە هێشتا بەردەست نییە. ئینگلیزی، ئەڵمانی، فەڕەنسی یان تورکی هەڵبژێرە.",
+	},
 	"user.invalid_cefr": {
 		LocaleEn:  "Invalid level.",
 		LocaleFa:  "سطح نامعتبر است.",

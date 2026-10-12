@@ -41,3 +41,17 @@ type ProfileFields struct {
 	TargetLang  string
 	CEFR        string
 }
+
+// SupportedTargetLangs are the languages a learner can study (all Latin
+// script); they match the course target languages.
+var SupportedTargetLangs = []string{"en", "de", "fr", "tr"}
+
+// IsSupportedTargetLang reports whether code is a language a learner can study.
+func IsSupportedTargetLang(code string) bool {
+	for _, l := range SupportedTargetLangs {
+		if l == code {
+			return true
+		}
+	}
+	return false
+}

@@ -222,6 +222,9 @@ type LessonWithItems struct {
 	Lesson domain.Lesson
 	Items  []ItemWithExercises
 	Locked bool
+	// Language is the course's target language (en, de, fr, tr…). The player
+	// uses it for pronunciation and to file words into the right review deck.
+	Language string
 }
 
 type ProgressSummary struct {
@@ -363,14 +366,18 @@ func (s *Service) GetLesson(ctx context.Context, v Viewer, id string) (*LessonWi
 	if err != nil {
 		return nil, err
 	}
+	language := domain.DefaultLanguage
+	if c, err := s.courses.Course(ctx, l.CourseID); err == nil && c.Language != "" {
+		language = c.Language
+	}
 	if !open {
-		return &LessonWithItems{Lesson: *l, Locked: true}, nil
+		return &LessonWithItems{Lesson: *l, Locked: true, Language: language}, nil
 	}
 	items, err := s.courses.Items(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	out := &LessonWithItems{Lesson: *l, Items: make([]ItemWithExercises, 0, len(items))}
+	out := &LessonWithItems{Lesson: *l, Items: make([]ItemWithExercises, 0, len(items)), Language: language}
 	items = s.localizeItems(ctx, items)
 	for _, it := range items {
 		var exs []domain.Exercise

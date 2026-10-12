@@ -79,7 +79,7 @@ type CreateCourseInput struct{ Language, CEFR, Title, Description, ImageURL, Sou
 // from that source earlier is returned with reused=true, so retrying an
 // interrupted "new course" import never creates a second course.
 func (s *Service) CreateCourse(ctx context.Context, in CreateCourseInput) (*coursedomain.Course, bool, error) {
-	if in.Language == "" || in.Title == "" {
+	if in.Language == "" || in.Title == "" || !coursedomain.IsSupportedLanguage(in.Language) {
 		return nil, false, apperr.ErrBadRequest
 	}
 	sourceID := strings.TrimSpace(in.SourceID)

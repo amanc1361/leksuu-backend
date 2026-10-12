@@ -425,3 +425,17 @@ func TestMoveLessonIntoUnitWithSameSourceIsConflict(t *testing.T) {
 		t.Fatalf("err = %v, want ErrLessonSourceConflict", err)
 	}
 }
+
+// Courses can only be created for a supported target language.
+func TestCreateCourseRejectsUnsupportedLanguage(t *testing.T) {
+	svc := NewService(courserepo.NewMemoryCourseRepo(), nil)
+	ctx := context.Background()
+	for _, lang := range []string{"de", "fr", "tr"} {
+		if _, _, err := svc.CreateCourse(ctx, CreateCourseInput{Language: lang, CEFR: "A1", Title: lang + " A1"}); err != nil {
+			t.Fatalf("%s course should be created: %v", lang, err)
+		}
+	}
+	if _, _, err := svc.CreateCourse(ctx, CreateCourseInput{Language: "ar", CEFR: "A1", Title: "Arabic A1"}); err == nil {
+		t.Fatal("an unsupported course language must be rejected")
+	}
+}

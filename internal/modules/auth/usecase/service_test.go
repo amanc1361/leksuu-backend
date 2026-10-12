@@ -241,3 +241,25 @@ func TestListUsersSortAndStatus(t *testing.T) {
 		t.Fatal("expected unknown user error")
 	}
 }
+
+// A learner can study English, German, French or Turkish; anything else is
+// rejected instead of silently stored.
+func TestUpdateProfileAcceptsOnlySupportedTargetLanguages(t *testing.T) {
+	s := newService()
+	ctx := context.Background()
+	u, err := s.Register(ctx, usecase.RegisterInput{Email: "lang@x.com", Password: "pw", DisplayName: "L"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, lang := range []string{"en", "de", "fr", "tr"} {
+		got, err := s.UpdateProfile(ctx, u.ID, usecase.UpdateProfileInput{TargetLang: lang})
+		if err != nil || got.TargetLang != lang {
+			t.Fatalf("target %q should be accepted: %v %+v", lang, err, got)
+		}
+	}
+	for _, lang := range []string{"ar", "es", "xx"} {
+		if _, err := s.UpdateProfile(ctx, u.ID, usecase.UpdateProfileInput{TargetLang: lang}); err != domain.ErrInvalidTargetLang {
+			t.Fatalf("target %q should be rejected, got %v", lang, err)
+		}
+	}
+}

@@ -209,6 +209,9 @@ func (s *Service) UpdateProfile(ctx context.Context, userID string, in UpdatePro
 		f.NativeLang = in.NativeLang
 	}
 	if in.TargetLang != "" {
+		if !domain.IsSupportedTargetLang(in.TargetLang) {
+			return nil, domain.ErrInvalidTargetLang
+		}
 		f.TargetLang = in.TargetLang
 	}
 	if in.CEFR != "" {

@@ -259,6 +259,7 @@ func (h *Handler) GetLesson(w http.ResponseWriter, r *http.Request) {
 	}
 	body := lessonView(lwi.Lesson)
 	body["course_id"] = lwi.Lesson.CourseID
+	body["language"] = lwi.Language
 	body["items"] = items
 	body["locked"] = lwi.Locked
 	web.JSON(w, http.StatusOK, body)

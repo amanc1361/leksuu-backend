@@ -510,3 +510,26 @@ func TestCheckpointNeedsEightyPercent(t *testing.T) {
 		t.Fatalf("80%% must pass: %+v err=%v", res, err)
 	}
 }
+
+// The lesson carries its course's target language, so the player pronounces
+// and files words in the right language.
+func TestGetLessonCarriesCourseLanguage(t *testing.T) {
+	ctx := context.Background()
+	courses := repo.NewMemoryCourseRepo()
+	s := usecase.NewService(courses, repo.NewMemoryProgressRepo(courses.LessonCourseID), nil, time.Now)
+	l, err := courses.Lesson(ctx, "lesson-greetings")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := courses.Course(ctx, l.CourseID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lwi, err := s.GetLesson(ctx, usecase.Viewer{UserID: "u-lang", Admin: true}, "lesson-greetings")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lwi.Language == "" || lwi.Language != c.Language {
+		t.Fatalf("lesson language %q, course language %q", lwi.Language, c.Language)
+	}
+}

@@ -76,6 +76,23 @@ func KindOrDefault(k string) string {
 	return LessonKindLesson
 }
 
+// Target languages a course can teach (all Latin script). DefaultLanguage is
+// used when a course has none recorded.
+const DefaultLanguage = "en"
+
+// SupportedLanguages lists the course target languages, in display order.
+var SupportedLanguages = []string{"en", "de", "fr", "tr"}
+
+// IsSupportedLanguage reports whether code is a course target language.
+func IsSupportedLanguage(code string) bool {
+	for _, l := range SupportedLanguages {
+		if l == code {
+			return true
+		}
+	}
+	return false
+}
+
 // Lesson kinds.
 const (
 	LessonKindLesson     = "lesson"
