@@ -38,6 +38,8 @@ type Tutor struct {
 	HourlyGems  int      `json:"hourly_gems"`
 	RatingAvg   float64  `json:"rating_avg"`
 	RatingCount int      `json:"rating_count"`
+	// SessionPriceToman is the teacher's price per session (0 = not set yet).
+	SessionPriceToman int `json:"session_price_toman"`
 }
 
 // Slot is one bookable opening. StartUTC is always UTC; the client renders it in

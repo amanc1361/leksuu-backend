@@ -117,6 +117,31 @@ var catalog = map[string]map[string]string{
 		LocaleFa:  "این بخش مالِ اپِ یادگیری است و فقط برای حساب‌های یادگیرنده است.",
 		LocaleCkb: "ئەم بەشە بەشێکە لە ئەپی فێربوون و تەنها بۆ هەژماری فێرخوازە.",
 	},
+	"tutor.payment_required": {
+		LocaleEn:  "Pay for this session to book it.",
+		LocaleFa:  "برای رزروِ این جلسه باید هزینه‌اش را پرداخت کنی.",
+		LocaleCkb: "بۆ گرتنی ئەم دانیشتنە دەبێت تێچووەکەی بدەیت.",
+	},
+	"tutor.price_not_set": {
+		LocaleEn:  "This teacher hasn't set a session price yet.",
+		LocaleFa:  "این معلم هنوز قیمتِ جلسه را تعیین نکرده است.",
+		LocaleCkb: "ئەم مامۆستایە هێشتا نرخی دانیشتنی دیاری نەکردووە.",
+	},
+	"tutor.payments_unavailable": {
+		LocaleEn:  "Paying for sessions isn't available right now.",
+		LocaleFa:  "پرداختِ جلسه در حالِ حاضر در دسترس نیست.",
+		LocaleCkb: "پارەدان بۆ دانیشتن ئێستا بەردەست نییە.",
+	},
+	"tutor.invalid_price": {
+		LocaleEn:  "Enter a price greater than zero.",
+		LocaleFa:  "قیمتی بیشتر از صفر وارد کن.",
+		LocaleCkb: "نرخێک لە سفر زیاتر بنووسە.",
+	},
+	"tutor.checkout_not_found": {
+		LocaleEn:  "Payment not found.",
+		LocaleFa:  "پرداخت پیدا نشد.",
+		LocaleCkb: "پارەدانەکە نەدۆزرایەوە.",
+	},
 	"auth.forbidden": {
 		LocaleEn:  "You do not have permission for this action.",
 		LocaleFa:  "شما اجازه‌ی این عمل را ندارید.",

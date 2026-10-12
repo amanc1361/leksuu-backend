@@ -6,6 +6,7 @@ package app
 import (
 	"context"
 	"errors"
+	tutordomain "github.com/leksuu/platform/internal/modules/tutor/domain"
 	"log/slog"
 	"net/http"
 	"os"
@@ -238,6 +239,14 @@ func New(cfg config.Config) (*App, error) {
 		Clock: time.Now,
 		Users: authModule.Service(), // resolve student display names for the portal
 	})
+	// Online classes are sold per session: prices, credit and checkouts live in
+	// the tutor store; billing opens the gateway payment and settles it.
+	if m, ok := repos.tutor.(tutordomain.MarketStore); ok {
+		tutorModule.Service().SetMarket(m)
+	}
+	tutorModule.Service().SetShare(settingsModule.Service())
+	tutorModule.Service().SetPayments(billingModule.Service())
+	billingModule.Service().SetSessionFulfiller(tutorModule.Service())
 	tutorModule.Service().SetNotifier(notifModule.Service())
 	gamificationModule.Service().SetNotifier(notifModule.Service()) // weekly recap
 	tutorModule.Service().SetClassAccess(billingModule.Service())

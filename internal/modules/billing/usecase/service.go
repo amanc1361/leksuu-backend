@@ -44,6 +44,7 @@ type Config struct {
 }
 
 type Service struct {
+	sessions SessionFulfiller // online-class sessions bought per class
 	repo     domain.Repository
 	provider PaymentProvider
 	wallet   Wallet
@@ -304,12 +305,42 @@ func (s *Service) Subscribe(ctx context.Context, userID, product, period string)
 	return payURL, nil
 }
 
+// ProductSession marks a payment for one online-class session.
+const ProductSession = "session"
+
+// SessionFulfiller settles a session checkout once its payment resolves.
+type SessionFulfiller interface {
+	FulfillCheckout(ctx context.Context, checkoutID string, paid bool) error
+}
+
+// SetSessionFulfiller wires the tutor module (sessions bought per class).
+func (s *Service) SetSessionFulfiller(f SessionFulfiller) { s.sessions = f }
+
+// StartSessionPayment opens a gateway payment for a session checkout; the
+// payment row keeps the checkout id so the callback can settle it.
+func (s *Service) StartSessionPayment(ctx context.Context, userID, checkoutID string, amountToman int, desc string) (string, error) {
+	authority, payURL, err := s.provider.RequestPayment(ctx, amountToman, desc, s.cfg.CallbackURL)
+	if err != nil {
+		return "", err
+	}
+	if err := s.repo.CreatePayment(ctx, domain.Payment{
+		Authority: authority, UserID: userID, Product: ProductSession, PlanID: checkoutID,
+		AmountToman: amountToman, Status: "pending", CreatedAt: s.now(),
+	}); err != nil {
+		return "", err
+	}
+	return payURL, nil
+}
+
 // HandleCallback verifies a returned payment and activates the subscription.
 // Returns the frontend URL to redirect the user to.
 func (s *Service) HandleCallback(ctx context.Context, authority, status string) string {
 	pay, err := s.repo.GetPayment(ctx, authority)
 	if err != nil || pay == nil {
 		return s.cfg.FailURL
+	}
+	if pay.Product == ProductSession {
+		return s.handleSessionCallback(ctx, pay, status)
 	}
 	if !strings.EqualFold(status, "OK") {
 		_ = s.repo.MarkPayment(ctx, authority, "failed", "")
@@ -501,4 +532,31 @@ func (s *Service) UserBillingDetail(ctx context.Context, userID string) (*UserBi
 		}
 	}
 	return out, nil
+}
+
+// handleSessionCallback verifies a session payment and hands the result to the
+// tutor module, which books the session (or releases the held slot).
+func (s *Service) handleSessionCallback(ctx context.Context, pay *domain.Payment, status string) string {
+	if pay.Status == "paid" {
+		return s.cfg.SuccessURL // already settled (callback replayed)
+	}
+	paid := false
+	if strings.EqualFold(status, "OK") {
+		if refID, err := s.provider.VerifyPayment(ctx, pay.Authority, pay.AmountToman); err == nil {
+			_ = s.repo.MarkPayment(ctx, pay.Authority, "paid", refID)
+			paid = true
+		}
+	}
+	if !paid {
+		_ = s.repo.MarkPayment(ctx, pay.Authority, "failed", "")
+	}
+	if s.sessions != nil {
+		if err := s.sessions.FulfillCheckout(ctx, pay.PlanID, paid); err != nil {
+			return s.cfg.FailURL
+		}
+	}
+	if paid {
+		return s.cfg.SuccessURL
+	}
+	return s.cfg.FailURL
 }

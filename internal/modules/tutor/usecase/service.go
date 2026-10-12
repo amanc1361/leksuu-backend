@@ -100,6 +100,10 @@ type Service struct {
 	payout      PayoutRate
 	groupSess   GroupSessionSource
 	roles       RoleAssigner
+	// Paid sessions (market.go): prices, credit, checkouts, teacher share.
+	market   domain.MarketStore
+	share    SharePercent
+	payments PaymentStarter
 }
 
 // SetDirectory wires the user-name resolver (optional; nil-safe).
@@ -215,7 +219,7 @@ func (s *Service) ListTutors(ctx context.Context, lang string) ([]domain.Tutor, 
 			out = append(out, t)
 		}
 	}
-	return out, nil
+	return s.withPrices(ctx, out), nil
 }
 
 // TutorDetail bundles a tutor with their upcoming free slots.
@@ -239,11 +243,11 @@ func (s *Service) GetTutor(ctx context.Context, tutorID string) (*TutorDetail, e
 	if err != nil {
 		return nil, err
 	}
-	return &TutorDetail{Tutor: *t, Availability: slots}, nil
+	return &TutorDetail{Tutor: s.withPrices(ctx, []domain.Tutor{*t})[0], Availability: slots}, nil
 }
 
-// Book reserves a future, unbooked slot for the learner and opens a room.
-func (s *Service) Book(ctx context.Context, learnerID, slotID string) (*domain.Booking, error) {
+// bookLegacy books under the old class subscription (no charge per session).
+func (s *Service) bookLegacy(ctx context.Context, learnerID, slotID string) (*domain.Booking, error) {
 	slot, err := s.repo.Slot(ctx, slotID)
 	if err != nil {
 		return nil, err
@@ -327,6 +331,10 @@ func (s *Service) Cancel(ctx context.Context, learnerID, bookingID string) error
 		return apperr.New("tutor.too_late_to_cancel", apperr.KindValidation)
 	}
 	if err := s.repo.UpdateBookingStatus(ctx, b.ID, domain.StatusCancelled); err != nil {
+		return err
+	}
+	// More than 24h ahead: the price comes back as credit; later: no refund.
+	if err := s.refund(ctx, b, false); err != nil {
 		return err
 	}
 	s.notifyTutor(ctx, b.TutorID, domain.NotifBookingCancelled, map[string]string{
@@ -889,17 +897,20 @@ type SessionLine struct {
 // EarningsReport summarizes a tutor's teaching activity and payout. Earnings are
 // derived from completed teaching time at the admin-configured hourly rate.
 type EarningsReport struct {
-	PayoutPerHourToman int           `json:"payout_per_hour_toman"`
-	TaughtMinutes      int           `json:"taught_minutes"`
-	CompletedSessions  int           `json:"completed_sessions"`
-	UpcomingSessions   int           `json:"upcoming_sessions"`
-	CancelledSessions  int           `json:"cancelled_sessions"`
-	UniqueStudents     int           `json:"unique_students"`
-	GroupCompleted     int           `json:"group_completed"`
-	GroupUpcoming      int           `json:"group_upcoming"`
-	GroupAttendees     int           `json:"group_attendees"`
-	EarningsToman      int           `json:"earnings_toman"`
-	Recent             []SessionLine `json:"recent"`
+	PayoutPerHourToman int `json:"payout_per_hour_toman"`
+	TaughtMinutes      int `json:"taught_minutes"`
+	CompletedSessions  int `json:"completed_sessions"`
+	UpcomingSessions   int `json:"upcoming_sessions"`
+	CancelledSessions  int `json:"cancelled_sessions"`
+	UniqueStudents     int `json:"unique_students"`
+	GroupCompleted     int `json:"group_completed"`
+	GroupUpcoming      int `json:"group_upcoming"`
+	GroupAttendees     int `json:"group_attendees"`
+	EarningsToman      int `json:"earnings_toman"`
+	// SessionEarningsToman is the part of EarningsToman from priced sessions
+	// (the teacher's share); the rest is hourly (subscription / group classes).
+	SessionEarningsToman int           `json:"session_earnings_toman"`
+	Recent               []SessionLine `json:"recent"`
 }
 
 // EarningsReport builds the teaching/earnings summary for the tutor linked to
@@ -935,8 +946,28 @@ func (s *Service) EarningsReport(ctx context.Context, userID string) (*EarningsR
 		ids = append(ids, b.LearnerID)
 	}
 	names := s.names(ctx, ids)
+	prices := map[string]domain.BookingPrice{}
+	if s.market != nil {
+		// (ids above are learner ids, for names; prices are keyed by booking.)
+		bookingIDs := make([]string, 0, len(bookings))
+		for _, b := range bookings {
+			bookingIDs = append(bookingIDs, b.ID)
+		}
+		if prices, err = s.market.BookingPrices(ctx, bookingIDs); err != nil {
+			return nil, err
+		}
+	}
+	pricedMinutes := 0 // taught minutes already paid by the session price
 
 	for _, b := range bookings {
+		if p, ok := prices[b.ID]; ok {
+			if earned, counts := sessionEarning(b, p, now); counts {
+				rep.SessionEarningsToman += earned
+				if b.EffectiveStatus(now) == domain.StatusCompleted {
+					pricedMinutes += b.DurationMin
+				}
+			}
+		}
 		var status string
 		switch b.EffectiveStatus(now) {
 		case domain.StatusCompleted:
@@ -981,7 +1012,7 @@ func (s *Service) EarningsReport(ctx context.Context, userID string) (*EarningsR
 		}
 	}
 
-	rep.EarningsToman = rep.TaughtMinutes * rate / 60
+	rep.EarningsToman = (rep.TaughtMinutes-pricedMinutes)*rate/60 + rep.SessionEarningsToman
 
 	// Most recent first; cap at 8 rows.
 	sort.Slice(entries, func(i, j int) bool { return entries[i].start.After(entries[j].start) })
@@ -1002,6 +1033,11 @@ type PayoutSummary struct {
 	PrivateMinutes     int `json:"private_minutes"`
 	GroupMinutes       int `json:"group_minutes"`
 	PayoutToman        int `json:"payout_toman"`
+	// Priced sessions: what learners paid, the teachers' part (inside
+	// PayoutToman) and the platform's part.
+	SessionRevenueToman int `json:"session_revenue_toman"`
+	SessionPayoutToman  int `json:"session_payout_toman"`
+	PlatformShareToman  int `json:"platform_share_toman"`
 }
 
 // TotalPayout aggregates completed teaching time across all tutors (1:1 + group)
@@ -1015,9 +1051,32 @@ func (s *Service) TotalPayout(ctx context.Context) (*PayoutSummary, error) {
 	if err != nil {
 		return nil, err
 	}
+	prices := map[string]domain.BookingPrice{}
+	if s.market != nil {
+		ids := make([]string, 0, len(bookings))
+		for _, b := range bookings {
+			ids = append(ids, b.ID)
+		}
+		if prices, err = s.market.BookingPrices(ctx, ids); err != nil {
+			return nil, err
+		}
+	}
+	hourlyPrivate := 0
 	for _, b := range bookings {
+		if p, ok := prices[b.ID]; ok {
+			if earned, counts := sessionEarning(b, p, now); counts {
+				sum.SessionRevenueToman += p.PriceToman
+				sum.SessionPayoutToman += earned
+				sum.PlatformShareToman += p.PriceToman - earned
+			}
+			if b.EffectiveStatus(now) == domain.StatusCompleted {
+				sum.PrivateMinutes += b.DurationMin
+			}
+			continue
+		}
 		if b.EffectiveStatus(now) == domain.StatusCompleted {
 			sum.PrivateMinutes += b.DurationMin
+			hourlyPrivate += b.DurationMin
 		}
 	}
 	if s.groupSess != nil {
@@ -1030,7 +1089,7 @@ func (s *Service) TotalPayout(ctx context.Context) (*PayoutSummary, error) {
 		}
 	}
 	sum.TaughtMinutes = sum.PrivateMinutes + sum.GroupMinutes
-	sum.PayoutToman = sum.TaughtMinutes * rate / 60
+	sum.PayoutToman = (hourlyPrivate+sum.GroupMinutes)*rate/60 + sum.SessionPayoutToman
 	return sum, nil
 }
 
@@ -1208,6 +1267,10 @@ func (s *Service) TutorCancel(ctx context.Context, userID, bookingID string) err
 		return apperr.New("tutor.too_late_to_cancel", apperr.KindValidation)
 	}
 	if err := s.repo.UpdateBookingStatus(ctx, b.ID, domain.StatusCancelled); err != nil {
+		return err
+	}
+	// The teacher cancelled: the learner always gets the full price back.
+	if err := s.refund(ctx, b, true); err != nil {
 		return err
 	}
 	if s.notif != nil {

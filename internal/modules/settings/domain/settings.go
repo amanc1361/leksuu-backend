@@ -17,6 +17,9 @@ type Settings struct {
 	RoomJoinWindowMin int `json:"room_join_window_min"`
 
 	TutorPayoutPerHourToman int `json:"tutor_payout_per_hour_toman"`
+	// TeacherSharePercent is the teacher's share of a session's price (the
+	// platform keeps the rest), 0–100.
+	TeacherSharePercent int `json:"teacher_share_percent"`
 
 	CourseMonthlyToman int `json:"course_monthly_toman"`
 	CourseMonthlyDays  int `json:"course_monthly_days"`
@@ -36,6 +39,7 @@ func Defaults() Settings {
 		GemUnlockCost:           50,
 		RoomJoinWindowMin:       10,
 		TutorPayoutPerHourToman: 80000,
+		TeacherSharePercent:     70,
 		CourseMonthlyToman:      99000,
 		CourseMonthlyDays:       30,
 		CourseYearlyToman:       890000,
@@ -61,6 +65,9 @@ func (s *Settings) Normalize() {
 	}
 	if s.TutorPayoutPerHourToman < 0 {
 		s.TutorPayoutPerHourToman = d.TutorPayoutPerHourToman
+	}
+	if s.TeacherSharePercent < 0 || s.TeacherSharePercent > 100 {
+		s.TeacherSharePercent = d.TeacherSharePercent
 	}
 	if s.CourseMonthlyDays <= 0 {
 		s.CourseMonthlyDays = d.CourseMonthlyDays

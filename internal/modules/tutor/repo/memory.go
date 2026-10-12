@@ -20,6 +20,7 @@ type MemoryTutorRepo struct {
 	bookings map[string]*domain.Booking
 	reviews  map[string]*domain.Review // by booking id
 	clock    func() time.Time
+	mkt      *marketMem // paid sessions (market_memory.go)
 }
 
 func NewMemoryTutorRepo() *MemoryTutorRepo {

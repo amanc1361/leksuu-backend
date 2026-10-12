@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -239,5 +240,48 @@ func TestSubscribeWithoutGatewayIsUnavailable(t *testing.T) {
 	}
 	if len(r.pays) != 0 {
 		t.Fatal("no payment may be created")
+	}
+}
+
+type fakeFulfiller struct{ calls []string }
+
+func (f *fakeFulfiller) FulfillCheckout(_ context.Context, id string, paid bool) error {
+	f.calls = append(f.calls, fmt.Sprintf("%s:%v", id, paid))
+	return nil
+}
+
+// A session payment is settled by the tutor module: paid on OK, released on
+// failure, and a replayed callback doesn't settle twice.
+func TestSessionPaymentCallback(t *testing.T) {
+	ctx := context.Background()
+	r := newFake()
+	s := NewService(r, okProvider{}, &fakeWallet{}, Config{SuccessURL: "/ok", FailURL: "/fail"})
+	f := &fakeFulfiller{}
+	s.SetSessionFulfiller(f)
+	if _, err := s.StartSessionPayment(ctx, "u", "co-1", 200000, "session"); err != nil {
+		t.Fatal(err)
+	}
+	var authority string
+	for a, p := range r.pays {
+		if p.PlanID == "co-1" {
+			authority = a
+		}
+	}
+	if got := s.HandleCallback(ctx, authority, "OK"); got != "/ok" {
+		t.Fatalf("paid session → %q", got)
+	}
+	if got := s.HandleCallback(ctx, authority, "OK"); got != "/ok" || len(f.calls) != 1 || f.calls[0] != "co-1:true" {
+		t.Fatalf("replay must not settle twice: %q %v", got, f.calls)
+	}
+	if _, err := s.StartSessionPayment(ctx, "u", "co-2", 200000, "session"); err != nil {
+		t.Fatal(err)
+	}
+	for a, p := range r.pays {
+		if p.PlanID == "co-2" {
+			authority = a
+		}
+	}
+	if got := s.HandleCallback(ctx, authority, "NOK"); got != "/fail" || f.calls[len(f.calls)-1] != "co-2:false" {
+		t.Fatalf("failed session → %q %v", got, f.calls)
 	}
 }

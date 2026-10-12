@@ -140,3 +140,12 @@ func (s *Service) TutorPayoutPerHourToman(ctx context.Context) int {
 	}
 	return cur.TutorPayoutPerHourToman
 }
+
+// TeacherSharePercent returns the teacher's share of a session price (0–100).
+func (s *Service) TeacherSharePercent(ctx context.Context) int {
+	cur, err := s.Get(ctx)
+	if err != nil {
+		return domain.Defaults().TeacherSharePercent
+	}
+	return cur.TeacherSharePercent
+}

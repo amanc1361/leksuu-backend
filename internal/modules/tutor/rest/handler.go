@@ -27,6 +27,10 @@ func (h *Handler) Mount(mux *http.ServeMux, prefix string, guard Guard) {
 	mux.Handle("GET "+prefix+"/tutors", http.HandlerFunc(h.ListTutors))
 	mux.Handle("GET "+prefix+"/tutors/{id}", http.HandlerFunc(h.GetTutor))
 	mux.Handle("POST "+prefix+"/bookings", guard.Require(http.HandlerFunc(h.Book)))
+	// Paid sessions: pay at the gateway, see class credit, set your price.
+	mux.Handle("POST "+prefix+"/bookings/checkout", guard.Require(http.HandlerFunc(h.Checkout)))
+	mux.Handle("GET "+prefix+"/bookings/credit", guard.Require(http.HandlerFunc(h.Credit)))
+	mux.Handle("PUT "+prefix+"/tutor/me/price", guard.Require(http.HandlerFunc(h.SetMyPrice)))
 	mux.Handle("GET "+prefix+"/bookings", guard.Require(http.HandlerFunc(h.MyBookings)))
 	mux.Handle("POST "+prefix+"/bookings/{id}/cancel", guard.Require(http.HandlerFunc(h.Cancel)))
 	mux.Handle("POST "+prefix+"/bookings/{id}/review", guard.Require(http.HandlerFunc(h.Review)))
@@ -570,4 +574,62 @@ func (h *Handler) UpdateMyTutorProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	web.JSON(w, http.StatusOK, t)
+}
+
+// Checkout holds the slot and returns the gateway URL to pay for it.
+func (h *Handler) Checkout(w http.ResponseWriter, r *http.Request) {
+	p, ok := authn.FromContext(r.Context())
+	if !ok {
+		web.Error(w, r, apperr.ErrInternal)
+		return
+	}
+	var in struct {
+		SlotID string `json:"slot_id"`
+	}
+	if json.NewDecoder(r.Body).Decode(&in) != nil || in.SlotID == "" {
+		web.Error(w, r, apperr.ErrBadRequest)
+		return
+	}
+	url, err := h.svc.CheckoutSession(r.Context(), p.Subject, in.SlotID)
+	if err != nil {
+		web.Error(w, r, err)
+		return
+	}
+	web.JSON(w, http.StatusOK, map[string]any{"pay_url": url})
+}
+
+// Credit returns the learner's class credit (refunds), in Toman.
+func (h *Handler) Credit(w http.ResponseWriter, r *http.Request) {
+	p, ok := authn.FromContext(r.Context())
+	if !ok {
+		web.Error(w, r, apperr.ErrInternal)
+		return
+	}
+	bal, err := h.svc.Credit(r.Context(), p.Subject)
+	if err != nil {
+		web.Error(w, r, err)
+		return
+	}
+	web.JSON(w, http.StatusOK, map[string]any{"balance_toman": bal})
+}
+
+// SetMyPrice sets the signed-in teacher's price per session (Toman).
+func (h *Handler) SetMyPrice(w http.ResponseWriter, r *http.Request) {
+	p, ok := authn.FromContext(r.Context())
+	if !ok {
+		web.Error(w, r, apperr.ErrInternal)
+		return
+	}
+	var in struct {
+		PriceToman int `json:"price_toman"`
+	}
+	if json.NewDecoder(r.Body).Decode(&in) != nil {
+		web.Error(w, r, apperr.ErrBadRequest)
+		return
+	}
+	if err := h.svc.SetMyPrice(r.Context(), p.Subject, in.PriceToman); err != nil {
+		web.Error(w, r, err)
+		return
+	}
+	web.JSON(w, http.StatusOK, map[string]any{"price_toman": in.PriceToman})
 }
