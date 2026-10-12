@@ -320,6 +320,9 @@ func sameIndexSet(a, b []int) bool {
 	return true
 }
 
+// matchText trims and collapses whitespace but keeps case and punctuation.
+func matchText(s string) string { return strings.Join(strings.Fields(s), " ") }
+
 func samePairs(a, b [][]string) bool {
 	if len(a) != len(b) {
 		return false
@@ -329,7 +332,11 @@ func samePairs(a, b [][]string) bool {
 		if len(p) < 2 {
 			return ""
 		}
-		return normalize(p[0]) + "\x00" + normalize(p[1])
+		// Match answers are the exact tile texts, so compare them exactly:
+		// lowercasing would let "Sie" (formal you) pass for "sie" (she) —
+		// the very distinction such exercises teach. Identical tiles (e.g.
+		// "sie" twice, for she / they) stay interchangeable via the counts.
+		return matchText(p[0]) + "\x00" + matchText(p[1])
 	}
 	for _, p := range a {
 		set[keyOf(p)]++

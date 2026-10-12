@@ -32,6 +32,10 @@ func TestGradeAllTypes(t *testing.T) {
 		{"reorder wrong", ex("reorder", `{"order":["I","am","Sara"]}`), `{"order":["am","I","Sara"]}`, false},
 		{"match right (any order)", ex("match", `{"pairs":[["Hello","سلام"],["Bye","خداحافظ"]]}`), `{"pairs":[["Bye","خداحافظ"],["Hello","سلام"]]}`, true},
 		{"match wrong", ex("match", `{"pairs":[["Hello","سلام"],["Bye","خداحافظ"]]}`), `{"pairs":[["Hello","خداحافظ"],["Bye","سلام"]]}`, false},
+		// "sie" (she / they) vs "Sie" (formal you): case is the lesson.
+		{"match sie/Sie right", ex("match", `{"pairs":[["sie","she"],["sie","they"],["Sie","you (formal)"]]}`), `{"pairs":[["Sie","you (formal)"],["sie","they"],["sie","she"]]}`, true},
+		{"match sie/Sie case swapped", ex("match", `{"pairs":[["sie","she"],["sie","they"],["Sie","you (formal)"]]}`), `{"pairs":[["Sie","she"],["sie","they"],["sie","you (formal)"]]}`, false},
+		{"match tolerates extra spaces", ex("match", `{"pairs":[["Guten Tag","Hello"]]}`), `{"pairs":[[" Guten  Tag ","Hello"]]}`, true},
 		{"true/false right (false)", ex("true_false", `{"answer":false}`), `{"value":false}`, true},
 		{"true/false wrong", ex("true_false", `{"answer":false}`), `{"value":true}`, false},
 		{"select right (any order)", ex("select_words", `{"selected":[0,4]}`), `{"selected":[4,0]}`, true},
