@@ -1,0 +1,18 @@
+{
+  "status": "committed",
+  "run_id": "94d21562-0c7e-4d76-9017-dd0bc4ec4ef9",
+  "lesson_id": "0625767d-231d-4c45-a340-c389dce5ec2a",
+  "draft_count": 34,
+  "native_review_verified": false,
+  "owner_authorized_publication": true,
+  "published_context_hash": "8f2fe3d60c240f3f6be28e424ccca5eee7212984f0dd93a0afe749e2a3abca5e",
+  "dictionary_entries": 6,
+  "editorial_correction_count": 1,
+  "backup_directory": "/root/localization-publication-94d21562",
+  "frontend_commit": "aa51f14",
+  "publisher_commit": "d745538",
+  "frontend_image_id": "sha256:56535e66ac3face031ef8c178d1f570fcaacce039bea10f3f0b1caeeb05a260a",
+  "authenticated_api_verified": true,
+  "original_english_and_answers_preserved": true,
+  "additional_openai_inference_requests": 0
+}

@@ -129,5 +129,7 @@
   "known_standard_rate_estimate_usd": 0.4873541,
   "known_conservative_estimate_usd": 0.9004532000000001,
   "unknown_usage_present": true,
-  "publication_started": false
+  "publication_started": false,
+  "snapshot_phase": "before_owner_authorized_publication",
+  "subsequent_publication_report": "publication-result.json"
 }
