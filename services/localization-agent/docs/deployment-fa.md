@@ -1,7 +1,7 @@
 # استقرار واقعی — ۲۰۲۶-۱۰-۲۱
 
 سرویس فعال: **https://leksuu.ir/localization/mcp**. این endpoint برای MCP است؛ درخواست
-بدون توکن عمداً 401 دریافت می‌کند. هیچ کلید OpenAI در آن منتشر یا استفاده نشده است.
+بدون توکن عمداً 401 دریافت می‌کند. کلید OpenAI فقط در کنترل‌گر قرار دارد و در فرایند MCP خالی است.
 
 ## سورس و اجرای مستقل
 
@@ -15,8 +15,8 @@
 
 - سورس: `/opt/leksuu/localization-agent`
 - کانتینر: `leksuu-localization-mcp-1`
-- image: `leksuu-localization:0.1.0`
-- image ID: `sha256:b087ace496276861d8eaa5e414fa2f29d3d44814d331cb91ac77165e5fa88ff7`
+- image: `leksuu-localization:0.1.5`
+- image ID: `sha256:3fabf6ac739199a47e6764ec7c1c4aef73da57fe198f4ae3075121663126025f`
 - شبکهٔ داخلی موجود: `platform`؛ هیچ پورت عمومی جدید یا PostgreSQL منتشر نشده است.
 - کاربر کانتینر: 10001، فایل‌سیستم فقط‌خواندنی، وضعیت health: healthy.
 - gateway: `/opt/platform/edge/conf.d/leksuu.caddy`، مسیر `/localization/*` به سرویس مستقل.
@@ -24,8 +24,8 @@
   `/opt/platform/secrets/localization-control.env` با مالک root و مجوز 0600.
 
 MCP فقط کلید اتصال نقش محدود و توکن اختصاصی MCP دارد؛ OpenAI key در MCP خالی است.
-فایل کنترل‌گر نیز OPENAI_API_KEY و OPENAI_MODEL خالی دارد؛ سقف مجاز پایلوت 5 است.
-مدل یا دسترسی حساب حدس زده نشده و worker پولی روشن نیست.
+کلید کنترل‌گر طبق دستور صریح کاربر تنظیم شده؛ مدل پیش‌فرض gpt-6.1-sol و سقف مجاز 5 است.
+هر دو مدل Sol/Astra واقعاً در Agents اجرا شدند. worker دائمی یا اجرای کل دوره فعال نیست.
 
 ## دیتابیس و بکاپ
 
@@ -48,19 +48,21 @@ schema/role یا secret نیمه‌نصب‌شده‌ای باقی نگذاشت.
 
 ## شواهد واقعی
 
-- ۳۰ آزمون محلی PostgreSQL/MCP موفق؛ یک هشدار deprecation مربوط به TestClient.
+- ۳۶ آزمون محلی PostgreSQL/MCP موفق؛ یک هشدار deprecation مربوط به TestClient.
 - روی سرور، اتصال با localization_service و SELECT پنج جدول آموزشی موفق بود.
 - source INSERT/UPDATE/DELETE/TRUNCATE و UPDATE وضعیت human_approved مجاز نیست.
 - handshake MCP، فهرست ۵ ابزار و دریافت درس با ۱۰ آیتم، ۸ تمرین و ۱۷ فیلد موفق بود.
-- شمارنده‌های runs/jobs/drafts قبل و بعد از بررسی هر سه صفر بودند.
+- در بررسی اولیه، شمارنده‌های runs/jobs/drafts قبل و بعد صفر بودند؛ پس از پایلوت، یک run، دو job و ۳۴ draft وجود دارد.
 - dry-run همان درس روی دیتابیس اصلی: writes=0، billable_requests=0.
 - از ماشین بیرون سرور، HTTPS واقعی آزمایش شد: /fa و /api/v1/courses و
   /localization/healthz همگی 200؛ MCP بدون توکن 401؛ initialize/tools/list/tools/call با
   توکن همگی 200 و دریافت ۱۷ فیلد واقعی موفق بود. توکن در خروجی ثبت نشد.
 - config کامل Caddy قبل از reload معتبر بود؛ سرویس‌های اپلیکیشن restart نشدند.
 
-این بررسی‌ها دسترسی خود OpenAI به MCP، دسترسی مدل‌ها یا کیفیت ترجمه را اثبات نمی‌کنند؛
-این موارد به کلید جایگزین و پایلوت مجاز وابسته‌اند. هزینهٔ API ایجادشده صفر است.
+پس از این بررسی‌های اولیه، اتصال از خود OpenAI و inference هر دو مدل تأیید شد.
+پایلوت یک درس completed است؛ ۱۷ فارسی و ۱۷ سورانی، همگی نیازمند بازبینی انسانی.
+مصرف معلوم تقریباً ۰٫۴۹ دلار است؛ usage دو نشست ناموفق هنوز نامعلوم است.
+کیفیت سورانی تأیید بومی نشده؛ گزارش واقعی در ../reports/pilot-result-fa.md است.
 
 ## کنترل عملیاتی روی سرور
 
@@ -77,15 +79,18 @@ docker compose run --rm controller l10n --help
 docker compose run --rm controller l10n status RUN_UUID
 ```
 
-برای OpenAI، کلید افشاشدهٔ قبلی باید در حساب لغو شود. کلید جایگزین را فقط با ویرایشگر
-امن در OPENAI_API_KEY فایل localization-control.env قرار دهید؛ مدل را پس از check-openai
-انتخاب کنید. مقدار کلید را در چت، فرمان shell، commit یا log ننویسید.
+کلید فعلی در OPENAI_API_KEY فایل امن localization-control.env تنظیم شده است.
+برای تغییر تنظیمات از ویرایشگر امن استفاده کنید و مقدار کلید را در فرمان shell، commit
+یا log ننویسید. دسترسی مدل را با check-openai بررسی کنید.
 
 ```bash
 docker compose run --rm controller l10n check-openai
 ```
 
-بدون این تنظیمات، ترجمهٔ واقعی شروع نمی‌شود. ترجمهٔ کل دوره و انتشار خودکار فعال نشده‌اند.
+پایلوت واقعی تمام شده؛ ترجمهٔ کل دوره و انتشار خودکار فعال نشده‌اند.
+شناسهٔ اجرا: `94d21562-0c7e-4d76-9017-dd0bc4ec4ef9`.
+نسخهٔ 0.1.5 اصلاح کنترل‌گر روی همان وابستگی‌های قفل‌شدهٔ image اولیه است؛
+فایل Dockerfile کامل نیز برای build مستقل در مخزن وجود دارد.
 
 ## توقف و rollback سرویس
 

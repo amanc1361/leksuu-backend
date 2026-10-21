@@ -16,7 +16,14 @@ for f in mapping['fields']:
     issues=[]
     for lang in ('fa','ckb'):
         draft=lookup.get((f['source_type'],f['source_id'],f['path'],lang))
-        targets.append(e(draft['translation']) if draft else 'اجرا نشده؛ در انتظار پایلوت')
+        if draft:
+            rendered='<div>'+e(draft['translation'])+'</div>'
+            if draft.get('supplementary_note'):
+                rendered+='<small>یادداشت تکمیلی: '+e(draft['supplementary_note'])+'</small>'
+            rendered+='<small style="display:block">وضعیت: '+e(draft.get('status','needs_human_review'))+'</small>'
+            targets.append(rendered)
+        else:
+            targets.append('اجرا نشده؛ در انتظار پایلوت')
         if draft: issues+=draft.get('issues',[])
     rows.append(f"<tr><td>{e(f['path'])}</td><td dir='ltr'>{e(f['text'])}</td><td>{targets[0]}</td><td lang='ckb'>{targets[1]}</td><td>{e(', '.join(issues))}</td></tr>")
 status_note='ترجمهٔ پولی هنوز اجرا نشده است؛ ستون‌های مقصد در انتظار پایلوت هستند.' if not drafts else 'پیش‌نویس‌های اجراشده؛ بررسی انسانی و سورانی بومی هنوز لازم است.'

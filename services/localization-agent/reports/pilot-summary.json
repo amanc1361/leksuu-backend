@@ -1,0 +1,133 @@
+{
+  "run_id": "94d21562-0c7e-4d76-9017-dd0bc4ec4ef9",
+  "run_status": "completed",
+  "translation_model": "gpt-6.1-sol",
+  "reserved_budget_usd": "4",
+  "authorized_ceiling_usd": 5,
+  "draft_counts": [
+    {
+      "locale": "ckb",
+      "status": "needs_human_review",
+      "n": 17
+    },
+    {
+      "locale": "fa",
+      "status": "needs_human_review",
+      "n": 17
+    }
+  ],
+  "source_hash": "9c9c54d1b1ccbb83a4c408dbf0a840dac4cb312c3474975fd41d37577cfe582c",
+  "job_source_hashes": [
+    "9c9c54d1b1ccbb83a4c408dbf0a840dac4cb312c3474975fd41d37577cfe582c",
+    "9c9c54d1b1ccbb83a4c408dbf0a840dac4cb312c3474975fd41d37577cfe582c"
+  ],
+  "phases": [
+    {
+      "locale": "ckb",
+      "phase": "translate",
+      "session_id": "sess_0fc3cd65fa6d0554006ad90b7d58888199bad18c9038dc7eda",
+      "model": "gpt-6.1-sol",
+      "usage": {
+        "input_tokens": 36154,
+        "output_tokens": 2567,
+        "input_tokens_details": {
+          "cached_tokens": 18178
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 127
+        }
+      },
+      "conservative_estimate_usd": 0.11404460000000001,
+      "standard_rate_estimate_usd": 0.0634398,
+      "usage_incomplete": false,
+      "recovered_tool_errors": 0,
+      "prior_sessions": [],
+      "output_present": true
+    },
+    {
+      "locale": "ckb",
+      "phase": "review",
+      "session_id": "sess_060e3e9a227be220006ad90be7cf488198a1c2814d3a69a26d",
+      "model": "gpt-6.1-sol",
+      "usage": {
+        "input_tokens": 85909,
+        "input_tokens_details": {
+          "cached_tokens": 65370
+        },
+        "output_tokens": 2151,
+        "output_tokens_details": {
+          "reasoning_tokens": 191
+        },
+        "total_tokens": 88060
+      },
+      "conservative_estimate_usd": 0.127495,
+      "standard_rate_estimate_usd": 0.069125,
+      "usage_incomplete": false,
+      "recovered_tool_errors": 1,
+      "prior_sessions": [],
+      "output_present": true
+    },
+    {
+      "locale": "fa",
+      "phase": "translate",
+      "session_id": "sess_03813a5169228b7b006ad90c19be80819b889d3c4b96b6a58f",
+      "model": "gpt-6.1-sol",
+      "usage": {
+        "input_tokens": 36171,
+        "output_tokens": 1908,
+        "input_tokens_details": {
+          "cached_tokens": 18183
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 140
+        }
+      },
+      "conservative_estimate_usd": 0.10420860000000001,
+      "standard_rate_estimate_usd": 0.0568743,
+      "usage_incomplete": false,
+      "recovered_tool_errors": 0,
+      "prior_sessions": [],
+      "output_present": true
+    },
+    {
+      "locale": "fa",
+      "phase": "review",
+      "session_id": "sess_078949ab0ffd9fa6006ad90fc42d048199a2030114c15a432d",
+      "model": "gpt-6-astra",
+      "usage": {
+        "input_tokens": 40588,
+        "output_tokens": 1645,
+        "input_tokens_details": {
+          "cached_tokens": 21135
+        },
+        "output_tokens_details": {
+          "reasoning_tokens": 183
+        }
+      },
+      "conservative_estimate_usd": 0.554705,
+      "standard_rate_estimate_usd": 0.297915,
+      "usage_incomplete": true,
+      "recovered_tool_errors": 0,
+      "prior_sessions": [
+        {
+          "session_id": "sess_092a83193dda6e38006ad90c76424c81999d31641ccc056276",
+          "usage": null,
+          "unknown_usage": true,
+          "started": 1792609399.4573982
+        },
+        {
+          "session_id": "sess_0d982591056e3069006ad90ed77110819891cc29a5b071db00",
+          "usage": null,
+          "unknown_usage": true,
+          "started": 1792610008.6312215,
+          "model": "gpt-6.1-sol"
+        }
+      ],
+      "output_present": true
+    }
+  ],
+  "known_standard_rate_estimate_usd": 0.4873541,
+  "known_conservative_estimate_usd": 0.9004532000000001,
+  "unknown_usage_present": true,
+  "publication_started": false
+}

@@ -1,7 +1,7 @@
 name: leksuu-localization
 services:
   mcp:
-    image: ${LOCALIZATION_IMAGE:-leksuu-localization:0.1.0}
+    image: ${LOCALIZATION_IMAGE:-leksuu-localization:0.1.5}
     build: .
     restart: unless-stopped
     env_file: ${LOCALIZATION_ENV_FILE:-/opt/platform/secrets/localization.env}
@@ -21,7 +21,7 @@ services:
       timeout: 3s
       retries: 3
   controller:
-    image: ${LOCALIZATION_IMAGE:-leksuu-localization:0.1.0}
+    image: ${LOCALIZATION_IMAGE:-leksuu-localization:0.1.5}
     build: .
     profiles: [control]
     env_file: ${LOCALIZATION_CONTROL_ENV_FILE:-/opt/platform/secrets/localization-control.env}
