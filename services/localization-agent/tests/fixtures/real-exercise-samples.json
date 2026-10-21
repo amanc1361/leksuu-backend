@@ -1,0 +1,187 @@
+[
+  {
+    "id": "0001d964-c709-436a-b17f-adb42972b545",
+    "type": "fill_blank",
+    "prompt": {
+      "hint": "Lola et Pierre sont ____ tatillons que Rémi.",
+      "text": "Lola et Pierre sont ____ tatillons que Rémi.",
+      "audio": "https://leksuu.ir/media/remote/1c9184478e0a84aad74238eef98f413a.mp3",
+      "explanation": "We use \"aussi... que\" to compare two things that are equal.",
+      "solution_audio": "https://leksuu.ir/media/remote/1c9184478e0a84aad74238eef98f413a.mp3"
+    },
+    "answer_key": {
+      "answers": [
+        "aussi"
+      ]
+    }
+  },
+  {
+    "id": "00404732-dfe3-4d43-a8d9-fba04f7c0b69",
+    "type": "fill_gaps",
+    "prompt": {
+      "text": "Does anyone want to ____ ____? Rob, what do you suggest?",
+      "image": "https://leksuu.ir/media/remote/db5045c4913bb0c8f9f7fdc8df54c7c2.jpg",
+      "options": [
+        "pinch",
+        "it",
+        "pitch",
+        "in"
+      ],
+      "segments": [
+        "Does anyone want to ",
+        " ",
+        "? Rob, what do you suggest?"
+      ],
+      "explanation": "The word \"pitch\" means \"to throw\", so \"to pitch in\" means to contribute (or \"throw in\") an idea.",
+      "solution_audio": "https://leksuu.ir/media/remote/361481e3e9ea29c7a4f0fc76ed240ae3.mp3"
+    },
+    "answer_key": {
+      "gaps": [
+        [
+          "pitch"
+        ],
+        [
+          "in"
+        ]
+      ],
+      "exact": true
+    }
+  },
+  {
+    "id": "0016509f-ee42-456f-876e-11b2ad76f2ba",
+    "type": "listen_choose",
+    "prompt": {
+      "audio": "https://leksuu.ir/media/remote/8f7adc19df50e6348e7c4c6514c13204.mp3",
+      "options": [
+        "der Geburtsort",
+        "die Personalien",
+        "der Reisepass"
+      ],
+      "question": "Select the correct translation of the word you can hear."
+    },
+    "answer_key": {
+      "correct": 1
+    }
+  },
+  {
+    "id": "002b5b19-c695-4bc0-9125-3f8610e1d355",
+    "type": "match",
+    "prompt": {
+      "left": [
+        "J'ai mal au ventre.",
+        "J'ai mal au pied.",
+        "J'ai mal à la jambe."
+      ],
+      "right": [
+        "J'ai mal à la jambe.",
+        "J'ai mal au ventre.",
+        "J'ai mal au pied."
+      ]
+    },
+    "answer_key": {
+      "pairs": [
+        [
+          "J'ai mal au ventre.",
+          "J'ai mal au ventre."
+        ],
+        [
+          "J'ai mal au pied.",
+          "J'ai mal au pied."
+        ],
+        [
+          "J'ai mal à la jambe.",
+          "J'ai mal à la jambe."
+        ]
+      ]
+    }
+  },
+  {
+    "id": "00016966-c320-4a11-8e0d-fded5a802218",
+    "type": "mcq",
+    "prompt": {
+      "image": "https://leksuu.ir/media/remote/f8761a8b6917f64d47f32a458c070998.jpg",
+      "video": "https://leksuu.ir/media/remote/99946f5193162899aa3bb7e9b0c6c486.mp4",
+      "options": [
+        "trying to say",
+        "telling you to say"
+      ],
+      "question": "What I'm ____ is that we need more resource on this project.",
+      "explanation": "We can use the phrase \"What I'm trying to say (is)...\" to rephrase our point.",
+      "phrase_audio": "https://leksuu.ir/media/remote/bb6b64260a1016cf585a4c3c479cb132.mp3"
+    },
+    "answer_key": {
+      "correct": 0
+    }
+  },
+  {
+    "id": "0019ec68-bec7-4ace-b355-5b20614d8ef3",
+    "type": "select_words",
+    "prompt": {
+      "tokens": [
+        "Volleyball",
+        "Schwimmen",
+        "Tanzen",
+        "Wandern",
+        "Fußball",
+        "Skifahren"
+      ],
+      "question": "Click on the sports that require a ball."
+    },
+    "answer_key": {
+      "selected": [
+        0,
+        4
+      ]
+    }
+  },
+  {
+    "id": "0000598f-1810-4517-9901-a3324893edeb",
+    "type": "sentence_builder",
+    "prompt": {
+      "words": [
+        "Si un pays",
+        "d’utiliser la bombe nucléaire,",
+        "décide",
+        "il",
+        "provoquera",
+        "l’apocalypse."
+      ],
+      "explanation": "Après « si », le mot « décide » est au présent, puis le mot « provoquera » est au futur simple."
+    },
+    "answer_key": {
+      "order": [
+        "Si un pays",
+        "décide",
+        "d’utiliser la bombe nucléaire,",
+        "il",
+        "provoquera",
+        "l’apocalypse."
+      ]
+    }
+  },
+  {
+    "id": "001d547e-22a9-4fdc-bd83-cdf8392b95b7",
+    "type": "speak",
+    "prompt": {
+      "text": "Elle apprend à utiliser l'intelligence artificielle.",
+      "audio": "https://leksuu.ir/media/remote/262868657a0c01315e86a8194622ffad.mp3",
+      "image": "https://leksuu.ir/media/remote/26bb7572db506b778b76c29c8bf07391.jpg"
+    },
+    "answer_key": {
+      "min_score": 60
+    }
+  },
+  {
+    "id": "000538ec-d376-430c-b6e0-c83ff80084d1",
+    "type": "true_false",
+    "prompt": {
+      "audio": "https://leksuu.ir/media/remote/869f60c7fa77bb7f47774040a6a4fdbc.mp3",
+      "context": "Egal, ob ich neue Möbel, Kleidung oder Elektronik brauche, ich finde alles online.",
+      "statement": "Furniture, clothes and electronics are irrelevant to the interviewee.",
+      "explanation": "Here, he uses \"egal\" to highlight that he buys all kinds of things online."
+    },
+    "answer_key": {
+      "answer": false
+    }
+  }
+]

@@ -1,0 +1,8 @@
+.git
+.venv
+.env*
+.runtime
+.pytest_cache
+**/__pycache__
+reports/private
+tests

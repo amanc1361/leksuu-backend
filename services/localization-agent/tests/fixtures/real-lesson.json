@@ -1,0 +1,349 @@
+{
+  "unit": {
+    "id": "31f0c3e1-2dc4-4cca-86a6-a1bea3f95e1e",
+    "title": "Languages",
+    "position": 5,
+    "course_id": "76d38137-3246-432d-b2d1-e5dbc87481b8",
+    "source_id": "str_05cc4b4f-008a-4b30-a8f6-13525de5a07c",
+    "created_at": "2026-10-10T10:20:09.093932+00:00",
+    "description": null
+  },
+  "items": [
+    {
+      "id": "e5f1ee80-0924-42a0-91a4-e4eb2f8c902a",
+      "kind": "text",
+      "ref_id": null,
+      "payload": {
+        "audio": "https://leksuu.ir/media/remote/350578df4bbc28357564e0427a197836.mp3",
+        "image": "https://leksuu.ir/media/remote/4744aef4c8324b4d0655ddba9b3eeaa4.jpg",
+        "video": "https://leksuu.ir/media/remote/2199dbf64d998c5fd6c5714b354006d1.mp4",
+        "phrase": "I speak English.",
+        "translation": {}
+      },
+      "position": 1,
+      "lesson_id": "0625767d-231d-4c45-a340-c389dce5ec2a",
+      "media_key": null,
+      "source_ref": "exercise_71ca04de-bea3-47b7-8f42-489617755307"
+    },
+    {
+      "id": "1c1277ea-ad28-4113-9368-25c210a306b6",
+      "kind": "exercise",
+      "ref_id": null,
+      "payload": {},
+      "position": 2,
+      "lesson_id": "0625767d-231d-4c45-a340-c389dce5ec2a",
+      "media_key": null,
+      "source_ref": "exercise_106c5ae4-2a58-4f3e-80c6-a51a3a13448e"
+    },
+    {
+      "id": "d40cd414-3b44-4d48-ab64-2ba283419786",
+      "kind": "exercise",
+      "ref_id": null,
+      "payload": {},
+      "position": 3,
+      "lesson_id": "0625767d-231d-4c45-a340-c389dce5ec2a",
+      "media_key": null,
+      "source_ref": "exercise_6f39c4cf-837f-43fc-a83d-3f3c1095e38d"
+    },
+    {
+      "id": "208ce339-d2ea-47d7-9441-93d30034966d",
+      "kind": "grammar",
+      "ref_id": null,
+      "payload": {
+        "rule": {
+          "en": "To talk about something that is a fact in the present, we add an \"-s\" to the verb after \"she\", \"he\", \"it\".\n\nFor \"I\", \"you\", \"we\" and \"they\", the form of the verb doesn't change."
+        },
+        "forms": [
+          {
+            "form": "Verb",
+            "subject": "Person"
+          },
+          {
+            "form": "We speak English.",
+            "audio": "https://leksuu.ir/media/remote/cf4babb99cb67aaea788da8a48ea7b51.mp3",
+            "subject": "I, you, we, they"
+          },
+          {
+            "form": "She speaks Polish.",
+            "audio": "https://leksuu.ir/media/remote/000def334a64bcc2ff366284f09288be.mp3",
+            "subject": "he, she, it"
+          }
+        ],
+        "title": "Third person singular \"s\"",
+        "source_lang": "en"
+      },
+      "position": 4,
+      "lesson_id": "0625767d-231d-4c45-a340-c389dce5ec2a",
+      "media_key": null,
+      "source_ref": "exercise_423f699d-f8da-44f8-9a85-a6cbef49ac45"
+    },
+    {
+      "id": "6d031b71-c989-4593-b54d-83b14b0a5056",
+      "kind": "exercise",
+      "ref_id": null,
+      "payload": {},
+      "position": 5,
+      "lesson_id": "0625767d-231d-4c45-a340-c389dce5ec2a",
+      "media_key": null,
+      "source_ref": "exercise_7a6c9436-76bd-44ac-9577-9a0c7e130f6e"
+    },
+    {
+      "id": "47ef115f-6d47-4162-8056-425b0ec075f9",
+      "kind": "exercise",
+      "ref_id": null,
+      "payload": {},
+      "position": 6,
+      "lesson_id": "0625767d-231d-4c45-a340-c389dce5ec2a",
+      "media_key": null,
+      "source_ref": "exercise_ede3ef6f-7a68-4920-bc63-2a8edef7a9dd"
+    },
+    {
+      "id": "59ef5dfc-ca7e-480c-9910-e54a6c62de1c",
+      "kind": "exercise",
+      "ref_id": null,
+      "payload": {},
+      "position": 7,
+      "lesson_id": "0625767d-231d-4c45-a340-c389dce5ec2a",
+      "media_key": null,
+      "source_ref": "exercise_9c21f775-6602-41f1-97c3-a45bcc615d52"
+    },
+    {
+      "id": "433b360e-2248-4e79-9b6c-6db43718a328",
+      "kind": "exercise",
+      "ref_id": null,
+      "payload": {},
+      "position": 8,
+      "lesson_id": "0625767d-231d-4c45-a340-c389dce5ec2a",
+      "media_key": null,
+      "source_ref": "exercise_68330952-9fc9-446a-a78e-463859c23f76"
+    },
+    {
+      "id": "5f456af4-a8bd-4478-b212-99e1bffb800e",
+      "kind": "exercise",
+      "ref_id": null,
+      "payload": {},
+      "position": 9,
+      "lesson_id": "0625767d-231d-4c45-a340-c389dce5ec2a",
+      "media_key": null,
+      "source_ref": "exercise_4092808c-dd2e-4d02-825c-2817b45626c2"
+    },
+    {
+      "id": "126597cf-b5c2-49ff-8e4e-b3b7676f7b9f",
+      "kind": "exercise",
+      "ref_id": null,
+      "payload": {},
+      "position": 10,
+      "lesson_id": "0625767d-231d-4c45-a340-c389dce5ec2a",
+      "media_key": null,
+      "source_ref": "exercise_a2903014-77cd-44ee-9ef9-1d7d7fd835bd"
+    }
+  ],
+  "course": {
+    "id": "76d38137-3246-432d-b2d1-e5dbc87481b8",
+    "title": "English A1 Imported",
+    "version": 1,
+    "language": "en",
+    "image_url": null,
+    "published": true,
+    "source_id": "busuu:course_pack_en_complete:pack_level_en_a1",
+    "cefr_level": "A1",
+    "created_at": "2026-10-10T10:20:04.116706+00:00",
+    "updated_at": "2026-10-10T10:58:39.743292+00:00",
+    "description": "Imported course pack."
+  },
+  "lesson": {
+    "id": "0625767d-231d-4c45-a340-c389dce5ec2a",
+    "kind": "lesson",
+    "focus": "grammar",
+    "title": "Affirmative verb forms",
+    "unit_id": "31f0c3e1-2dc4-4cca-86a6-a1bea3f95e1e",
+    "version": 1,
+    "position": 1,
+    "course_id": "76d38137-3246-432d-b2d1-e5dbc87481b8",
+    "cover_url": "https://leksuu.ir/media/remote/d7227a5e293352b484be338c34484dc3.jpg",
+    "objective": {
+      "points": [
+        {
+          "en": "Affirmative verb forms"
+        }
+      ],
+      "summary": {
+        "en": "Talk about the languages we know with the verb \"to speak\""
+      }
+    },
+    "source_id": "objective_fa3bd440-695d-487c-bb5e-52aa8ba2d40b"
+  },
+  "exercises": [
+    {
+      "id": "23e827cb-f30b-483f-8c91-f64401e68c72",
+      "type": "sentence_builder",
+      "prompt": {
+        "text": "I speak Russian, and she ____ Portuguese.",
+        "image": "https://leksuu.ir/media/remote/6fd4d0ce83ba8d90e86ed274d8a53067.jpg",
+        "words": [
+          "e",
+          "k",
+          "s",
+          "a",
+          "s",
+          "p"
+        ],
+        "joiner": "",
+        "explanation": "With \"I\" we use the base form of the verb \"speak\", but with \"she\" we add an \"-s\": \"she speaks\".",
+        "instruction": "Put the letters in order.",
+        "solution_audio": "https://leksuu.ir/media/remote/89158fae1503cdd849f6880428350fa0.mp3"
+      },
+      "answer_key": {
+        "order": [
+          "s",
+          "p",
+          "e",
+          "a",
+          "k",
+          "s"
+        ]
+      },
+      "difficulty": 1,
+      "lesson_item_id": "59ef5dfc-ca7e-480c-9910-e54a6c62de1c"
+    },
+    {
+      "id": "61e4d83e-cc70-412d-a145-11e916609c98",
+      "type": "mcq",
+      "prompt": {
+        "image": "https://leksuu.ir/media/remote/3924b29bfb54e512b6139621c5577516.jpg",
+        "video": "https://leksuu.ir/media/remote/e20cdd7f0ea852c24c72cabeb673ba1f.mp4",
+        "options": [
+          "speak",
+          "speaks"
+        ],
+        "question": "We ____ Turkish.",
+        "explanation": "We add an \"-s\" to a verb after \"she\", \"he\" and \"it\". The verb doesn't change after \"we\".",
+        "phrase_audio": "https://leksuu.ir/media/remote/0bf6a94eff0ad21020cdca5efd131210.mp3"
+      },
+      "answer_key": {
+        "correct": 0
+      },
+      "difficulty": 1,
+      "lesson_item_id": "433b360e-2248-4e79-9b6c-6db43718a328"
+    },
+    {
+      "id": "6fa732d6-dff6-401c-aafc-ff3952ccc3db",
+      "type": "match",
+      "prompt": {
+        "left": [
+          "he, she",
+          "we, they"
+        ],
+        "right": [
+          "speak",
+          "speaks"
+        ],
+        "explanation": "With the subject \"he\" or \"she\", we add an \"-s\" to the base form of the verb: \"speaks\"."
+      },
+      "answer_key": {
+        "pairs": [
+          [
+            "he, she",
+            "speaks"
+          ],
+          [
+            "we, they",
+            "speak"
+          ]
+        ]
+      },
+      "difficulty": 1,
+      "lesson_item_id": "6d031b71-c989-4593-b54d-83b14b0a5056"
+    },
+    {
+      "id": "8fe83282-2a09-4911-8d96-4ca815b131f9",
+      "type": "fill_blank",
+      "prompt": {
+        "text": "She ____ Turkish and English.",
+        "explanation": "When the subject is \"she\", an \"-s\" is added to the base form of the verb: \"speaks\".",
+        "instruction": "Complete the sentence with the correct form of \"to speak\"."
+      },
+      "answer_key": {
+        "answers": [
+          "speaks"
+        ]
+      },
+      "difficulty": 1,
+      "lesson_item_id": "126597cf-b5c2-49ff-8e4e-b3b7676f7b9f"
+    },
+    {
+      "id": "a6d47f0e-84e3-43d9-88c9-96d2f75009ba",
+      "type": "mcq",
+      "prompt": {
+        "image": "https://leksuu.ir/media/remote/6151f5c75600d9a00e3b26e3b99d5a8e.jpg",
+        "video": "https://leksuu.ir/media/remote/f5afa7518108c51e1ab5ff3886d7146c.mp4",
+        "options": [
+          "speaks",
+          "speak"
+        ],
+        "question": "You ____ English well.",
+        "explanation": "We add an \"-s\" to a verb after \"she\", \"he\" and \"it\". The verb doesn't change after \"you\".",
+        "phrase_audio": "https://leksuu.ir/media/remote/49a3105b2204922ab85f14350c50af0a.mp3"
+      },
+      "answer_key": {
+        "correct": 1
+      },
+      "difficulty": 1,
+      "lesson_item_id": "d40cd414-3b44-4d48-ab64-2ba283419786"
+    },
+    {
+      "id": "b7334f7b-f421-483f-8e00-bb0be4a7bafd",
+      "type": "fill_blank",
+      "prompt": {
+        "hint": "They ____ Chinese.",
+        "text": "They ____ Chinese.",
+        "audio": "https://leksuu.ir/media/remote/c4db9154baf864c27c730b0e95530fb0.mp3",
+        "explanation": "In the present, the verb form doesn't change after \"I\", \"you\" and \"they\".",
+        "instruction": "Listen and complete the sentence with the correct form of \"to speak\".",
+        "solution_audio": "https://leksuu.ir/media/remote/c4db9154baf864c27c730b0e95530fb0.mp3"
+      },
+      "answer_key": {
+        "answers": [
+          "speak"
+        ]
+      },
+      "difficulty": 1,
+      "lesson_item_id": "5f456af4-a8bd-4478-b212-99e1bffb800e"
+    },
+    {
+      "id": "b810fd39-0c40-4026-a4d9-f899c368f7a4",
+      "type": "mcq",
+      "prompt": {
+        "image": "https://leksuu.ir/media/remote/f56dcc90a0c201bb939a367ef9272ec9.jpg",
+        "video": "https://leksuu.ir/media/remote/c259dbf7ca21d5d551f91c84496ccf68.mp4",
+        "options": [
+          "speaks",
+          "speak"
+        ],
+        "question": "He ____ Spanish.",
+        "explanation": "When the subject is \"he\", we add an \"-s\" to the base form of the verb: \"speaks\".",
+        "phrase_audio": "https://leksuu.ir/media/remote/1181915383e7bc70dec13fe3b6f1215f.mp3"
+      },
+      "answer_key": {
+        "correct": 0
+      },
+      "difficulty": 1,
+      "lesson_item_id": "47ef115f-6d47-4162-8056-425b0ec075f9"
+    },
+    {
+      "id": "fa07b3c1-23a2-44b8-a373-f23e7eb1050e",
+      "type": "true_false",
+      "prompt": {
+        "audio": "https://leksuu.ir/media/remote/350578df4bbc28357564e0427a197836.mp3",
+        "image": "https://leksuu.ir/media/remote/582cb8a8eb9923a806f89b6846cb7ac7.jpg",
+        "statement": "This sentence describes the present.",
+        "explanation": "The forms \"speak\" and \"speaks\" describe a situation in the present."
+      },
+      "answer_key": {
+        "answer": true
+      },
+      "difficulty": 1,
+      "lesson_item_id": "1c1277ea-ad28-4113-9368-25c210a306b6"
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "dry_run": true,
+  "writes": 0,
+  "billable_requests": 0,
+  "field_count": 17,
+  "ambiguous": [
+    {
+      "source_id": "61e4d83e-cc70-412d-a145-11e916609c98",
+      "reason": "question_may_be_target_english_preserved"
+    },
+    {
+      "source_id": "a6d47f0e-84e3-43d9-88c9-96d2f75009ba",
+      "reason": "question_may_be_target_english_preserved"
+    },
+    {
+      "source_id": "b810fd39-0c40-4026-a4d9-f899c368f7a4",
+      "reason": "question_may_be_target_english_preserved"
+    },
+    {
+      "source_id": "fa07b3c1-23a2-44b8-a373-f23e7eb1050e",
+      "reason": "graded_statement_requires_human_mapping"
+    }
+  ],
+  "context_hash": "fce91557ad882a52a9f2e9299a2663570b71c63408b1e1c231be213ae64f58e1",
+  "tokenizer_proxy": "o200k_base",
+  "estimated_input_tokens": 89856,
+  "estimated_output_including_reasoning_tokens": 40000,
+  "pricing_date": "2026-10-21",
+  "estimated_usd": {
+    "gpt-6-astra": 2.8986,
+    "gpt-6.1-sol": 0.5797
+  },
+  "suggested_pilot_ceiling_usd": 5,
+  "budget_control": "best-effort polling/cancellation; not a provider hard dollar cap"
+}

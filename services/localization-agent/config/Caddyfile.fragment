@@ -1,0 +1,14 @@
+# Add INSIDE the existing leksuu.ir site; review ordering against existing routes.
+# No DNS change is needed for this option. Public URL: https://leksuu.ir/localization/mcp
+handle_path /localization/* {
+    request_body {
+        max_size 256KB
+    }
+    reverse_proxy leksuu-localization-mcp-1:8000
+}
+# Set MCP_ALLOWED_HOST=leksuu.ir and MCP_PUBLIC_URL=https://leksuu.ir/localization/mcp.
+# Alternatively a NEW DNS record + separate site:
+# translate-mcp.leksuu.ir {
+#     reverse_proxy leksuu-localization-mcp-1:8000
+# }
+# Do not enable Caddy request-header/body logging for this route.
