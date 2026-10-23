@@ -71,11 +71,20 @@ with httpx.Client(base_url='http://leksuu-api-1:8080/api/v1/admin/localization',
         pilot[locale]={'fields':len(fields),'published':sum(f['status']=='published' for f in fields)}
         assert pilot[locale]=={'fields':17,'published':17}
     assert client.get('/runs',headers=headers).status_code==200
+    memory_preview=client.post('/queue/preview',headers=headers,json={'lesson_ids':['bc33993c-741f-4617-84f8-00964aca89c0'],'locale':'fa','keys':[],'force':False})
+    assert memory_preview.status_code==200
+    memory_preview=memory_preview.json()
+    assert sum(memory_preview[k] for k in ('existing','active','reusable','waiting','fresh','review'))==memory_preview['total']
+    publication_preview=client.post('/publish/preview',headers=headers,json={'lesson_ids':['bc33993c-741f-4617-84f8-00964aca89c0'],'locale':'fa'})
+    assert publication_preview.status_code==200
+    # Preview stores only private approval metadata. Never confirm real lesson drafts here.
+    publication_preview=publication_preview.json()
+    assert publication_preview['batch_id'] and publication_preview['locale']=='fa'
 
 with workspace.connect() as c:
     after={name:c.execute('SELECT count(*) n FROM localization_admin.'+name).fetchone()['n'] for name in ('runs','tasks')}
 assert baseline==after
-report=dict(admin_http=200,denied_roles=denied,courses=len(catalog['courses']),
+report=dict(translation_preflight=memory_preview,bulk_publication_preview_http=200,publication_confirmed=False,admin_http=200,denied_roles=denied,courses=len(catalog['courses']),
     chapter1_lessons=7,chapter1_fields_per_language=58,chapter_catalog_seconds=elapsed,
     previous_pilot_coverage=pilot,provider_keys_redacted=True,
     providers=[{'kind':p['kind'],'model':p['model'],'has_key':p['has_key']} for p in configs],

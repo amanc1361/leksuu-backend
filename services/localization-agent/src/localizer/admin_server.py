@@ -86,6 +86,16 @@ def create_app(store=None,providers=None,start_worker=True):
                 return response(await asyncio.to_thread(store.lesson,lesson_id,q.get('locale','fa')))
             if route=='manual' and request.method=='PUT':
                 return response(await asyncio.to_thread(store.manual,str(UUID(data['lesson_id'])),data['locale'],data['key'],data['source_hash'],data['text'],int(data['revision']),actor))
+            if route=='queue/preview' and request.method=='POST':
+                if not isinstance(data.get('keys',[]),list) or not isinstance(data.get('force',False),bool):
+                    raise ValueError('invalid_scope')
+                return response(await asyncio.to_thread(store.preview_queue,data['lesson_ids'],data['locale'],data.get('keys',[]),data.get('force',False)))
+            if route=='publish/preview' and request.method=='POST':
+                return response(await asyncio.to_thread(store.prepare_publication,data['lesson_ids'],data['locale'],actor))
+            if route=='publish/batch' and request.method=='POST':
+                if not isinstance(data.get('replace_shared',False),bool):
+                    raise ValueError('invalid_shared_confirmation')
+                return response(await asyncio.to_thread(store.publish_batch,str(UUID(data['batch_id'])),actor,data.get('replace_shared',False)))
             if route=='queue' and request.method=='POST':
                 budget=float(data['budget_usd'])
                 if not math.isfinite(budget):

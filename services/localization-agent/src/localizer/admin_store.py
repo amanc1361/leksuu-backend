@@ -6,6 +6,8 @@ from uuid import UUID, uuid4
 
 from psycopg.types.json import Jsonb
 
+from .admin_memory import MemoryMixin, memory_key
+from .admin_batch import BatchPublicationMixin
 from .content import plan as source_plan
 from .publication import dictionary_hash
 from .resources import rules
@@ -65,7 +67,7 @@ def inline(context, field, locale):
     return value.get(locale, '') if isinstance(value, dict) else ''
 
 
-class Workspace(Store):
+class Workspace(MemoryMixin, BatchPublicationMixin, Store):
     def catalog(self, course_id=None, unit_id=None, locale='fa'):
         self.locale(locale)
         with self.connect() as c:
@@ -145,6 +147,8 @@ class Workspace(Store):
                 'error_code':record['error_code'] if record else None,
                 'revision':record['revision'] if record else 0,
                 'model':record['model'] if record else None,
+                'origin':record['origin'] if record else None,
+                'memory_source_id':str(record['memory_source_id']) if record and record.get('memory_source_id') else None,
                 'stale_previous':any(r['field_key']==f['key'] and r['source_hash']!=f['source_hash'] for r in records)})
         return dict(lesson_id=str(context['lesson']['id']),title=context['lesson']['title'],source_language=context['course']['language'],
                     locale=locale,context_hash=mapping['context_hash'],fields=fields,ambiguous=mapping['ambiguous'])
@@ -168,7 +172,8 @@ class Workspace(Store):
             record = self.ensure(c,lesson_id,locale,field)
             if record['revision'] != revision:
                 raise ValueError('draft_changed_reload')
-            c.execute("UPDATE localization_admin.segments SET translation=%s,origin='human',status='draft',issues=%s,error_code=NULL,revision=revision+1,updated_at=now() WHERE id=%s", (text,Jsonb(issues),record['id']))
+            c.execute("UPDATE localization_admin.segments SET translation=%s,origin='human',memory_source_id=NULL,status='draft',issues=%s,error_code=NULL,revision=revision+1,updated_at=now() WHERE id=%s", (text,Jsonb(issues),record['id']))
+            self.remember(c,self.context(lesson_id,c),field,locale,record['id'])
             self.audit(c,actor,'manual_draft',record['id'],{'before':record['translation'],'after':text})
         return self.lesson(lesson_id,locale)
 
@@ -183,21 +188,24 @@ class Workspace(Store):
         self.locale(locale)
         if not 1 <= len(lesson_ids) <= 500 or not 0 < budget <= 50:
             raise ValueError('scope_and_budget_required')
-        lesson_ids=[str(UUID(identity)) for identity in lesson_ids]
+        lesson_ids=list(dict.fromkeys(str(UUID(identity)) for identity in lesson_ids))
         if keys and len(lesson_ids)!=1:
             raise ValueError('field_selection_requires_one_lesson')
-        run_id = uuid4()
-        queued,skipped=0,0
+        run_id=uuid4()
+        queued=skipped=reused=waiting=fresh=review=0
+        cache={}
         with self.connect() as c:
+            c.execute('SELECT localization.lock_source()')
             c.execute('SELECT pg_advisory_xact_lock(172901324)')
             snapshot={k:v for k,v in provider.items() if k!='api_key'}
             scope=self.run_scope(c,lesson_ids)
-            if len(scope)!=len(set(lesson_ids)):
+            if len(scope)!=len(lesson_ids):
                 raise ValueError('lesson_not_found')
             c.execute('INSERT INTO localization_admin.runs(id,provider_id,model,locale,budget_usd,provider_snapshot,scope) VALUES (%s,%s,%s,%s,%s,%s,%s)', (run_id,provider['id'],provider['model'],locale,budget,Jsonb(snapshot),Jsonb(scope)))
-            for lesson_id in dict.fromkeys(lesson_ids):
-                detail = self.lesson(str(UUID(lesson_id)),locale,c)
-                if keys and not set(keys)<=set(f['key'] for f in detail['fields']):
+            for lesson_id in lesson_ids:
+                context=self.context(lesson_id,c)
+                detail=self.lesson(lesson_id,locale,c)
+                if keys and not set(keys)<={f['key'] for f in detail['fields']}:
                     raise ValueError('unknown_field')
                 for field in detail['fields']:
                     if keys and field['key'] not in keys:
@@ -206,17 +214,30 @@ class Workspace(Store):
                         skipped+=1
                         continue
                     record=self.ensure(c,lesson_id,locale,field)
-                    active=c.execute("SELECT id FROM localization_admin.tasks WHERE segment_id=%s AND status IN ('pending','running')", (record['id'],)).fetchone()
+                    active=c.execute("SELECT id FROM localization_admin.tasks WHERE segment_id=%s AND status IN ('pending','running','waiting')",(record['id'],)).fetchone()
                     if active:
                         skipped+=1
                         continue
-                    c.execute('INSERT INTO localization_admin.tasks(id,run_id,segment_id,expected_revision) VALUES (%s,%s,%s,%s)', (uuid4(),run_id,record['id'],record['revision']))
-                    c.execute("UPDATE localization_admin.segments SET status='pending',error_code=NULL WHERE id=%s",(record['id'],))
-                    queued+=1
+                    signature,state,source=(None,'fresh',None) if force else self.memory_lookup(c,context,field,locale,cache)
+                    parent=c.execute("SELECT id FROM localization_admin.tasks WHERE memory_key=%s AND status IN ('pending','running') ORDER BY created_at,id LIMIT 1",(signature,)).fetchone() if signature else None
+                    status='pending'
+                    if state=='reuse':
+                        self.reuse(c,context,field,locale,record,source,actor)
+                        status='reused';reused+=1
+                    elif state=='review':
+                        status='failed';review+=1
+                        c.execute("UPDATE localization_admin.segments SET status='failed',error_code='translation_memory_requires_review' WHERE id=%s",(record['id'],))
+                    elif parent:
+                        status='waiting';waiting+=1;queued+=1
+                        c.execute("UPDATE localization_admin.segments SET status='pending',error_code=NULL WHERE id=%s",(record['id'],))
+                    else:
+                        fresh+=1;queued+=1
+                        c.execute("UPDATE localization_admin.segments SET status='pending',error_code=NULL WHERE id=%s",(record['id'],))
+                    c.execute('INSERT INTO localization_admin.tasks(id,run_id,segment_id,expected_revision,status,memory_key,depends_on,error_code) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)',(uuid4(),run_id,record['id'],record['revision'],status,signature,parent['id'] if status=='waiting' else None,'translation_memory_requires_review' if state=='review' else None))
             if not queued:
-                c.execute("UPDATE localization_admin.runs SET status='skipped' WHERE id=%s",(run_id,))
-            self.audit(c,actor,'enqueue',None,{'run_id':str(run_id),'queued':queued,'skipped':skipped,'budget_usd':budget,'force':force})
-        return dict(run_id=str(run_id),queued=queued,skipped=skipped)
+                c.execute('UPDATE localization_admin.runs SET status=%s WHERE id=%s',('failed' if review else 'completed' if reused else 'skipped',run_id))
+            self.audit(c,actor,'enqueue',None,{'run_id':str(run_id),'queued':queued,'skipped':skipped,'reused':reused,'waiting':waiting,'fresh':fresh,'review':review,'budget_usd':budget,'force':force})
+        return dict(run_id=str(run_id),queued=queued,skipped=skipped,reused=reused,waiting=waiting,fresh=fresh,review=review)
 
     @staticmethod
     def run_scope(c,lesson_ids):
@@ -266,12 +287,12 @@ class Workspace(Store):
         with self.connect() as c:
             c.execute('UPDATE localization_admin.runs SET status=%s WHERE id=%s AND status IN (\'running\',\'paused\')', (status,UUID(run_id)))
             if status=='cancelled':
-                rows=c.execute("UPDATE localization_admin.tasks SET status='cancelled',updated_at=now() WHERE run_id=%s AND status='pending' RETURNING segment_id",(run_id,)).fetchall()
+                rows=c.execute("UPDATE localization_admin.tasks SET status='cancelled',updated_at=now() WHERE run_id=%s AND status IN ('pending','waiting') RETURNING segment_id",(run_id,)).fetchall()
                 for row in rows:
                     c.execute("UPDATE localization_admin.segments SET status=CASE WHEN translation<>'' THEN 'draft' ELSE 'missing' END,error_code=NULL WHERE id=%s AND status='pending'",(row['segment_id'],))
             self.audit(c,actor,status,None,{'run_id':run_id})
 
-    def publish(self,lesson_id,locale,keys,revisions,actor,replace_shared=False):
+    def publish(self,lesson_id,locale,keys,revisions,actor,replace_shared=False,expected_context_hash=None):
         self.locale(locale)
         if not keys or len(keys)>300:
             raise ValueError('explicit_field_selection_required')
@@ -280,6 +301,8 @@ class Workspace(Store):
             c.execute('SELECT localization.lock_source()')
             before=self.context(lesson_id,c)
             mapping=plan(before)
+            if expected_context_hash and mapping['context_hash']!=expected_context_hash:
+                raise ValueError('source_changed_reload')
             fields={f['key']:f for f in mapping['fields']}
             if not set(keys)<=fields.keys():
                 raise ValueError('source_changed_reload')
@@ -305,7 +328,7 @@ class Workspace(Store):
                         value=dict(row[leaf])
                         value[locale]=record['translation']
                         row[leaf]=value
-                    saved=c.execute('INSERT INTO public.content_translations(source_hash,locale,source_lang,source_text,text,origin) VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT(source_hash,locale) DO UPDATE SET text=excluded.text,origin=excluded.origin WHERE content_translations.text=excluded.text OR (%s AND content_translations.text=%s) RETURNING source_hash',(h,locale,before['course']['language'],field['text'],record['translation'],record['origin'],replace_shared,prior['text'] if prior else None)).fetchone()
+                    saved=c.execute('INSERT INTO public.content_translations(source_hash,locale,source_lang,source_text,text,origin) VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT(source_hash,locale) DO UPDATE SET text=excluded.text,origin=excluded.origin WHERE content_translations.text=excluded.text OR (%s AND content_translations.text=%s) RETURNING source_hash',(h,locale,before['course']['language'],field['text'],record['translation'],'human' if record['origin']=='human' else 'machine',replace_shared,prior['text'] if prior else None)).fetchone()
                     if not saved:
                         raise ValueError('shared_translation_conflict')
                     previous=prior
@@ -318,6 +341,7 @@ class Workspace(Store):
                     value[locale]=record['translation']
                     if isinstance(row,list): row[int(leaf)]=value
                     else: row[leaf]=value
+                self.remember(c,before,field,locale,record['id'])
                 self.audit(c,actor,'publish',record['id'],{'before':previous,'after':record['translation'],'source_hash':field['source_hash'],'native_review_verified':False})
                 c.execute("UPDATE localization_admin.segments SET status='published',updated_at=now() WHERE id=%s",(record['id'],))
             # Write ONLY whitelisted localized leaves. Answers/options/media stay intact.

@@ -22,6 +22,7 @@ def workspace(store):
         c.execute('ALTER TABLE public.lessons ADD COLUMN IF NOT EXISTS position integer DEFAULT 1')
         c.execute('CREATE TABLE public.content_translations(source_hash text,locale text,source_lang text,source_text text,text text,origin text,updated_at timestamptz DEFAULT now(),PRIMARY KEY(source_hash,locale))')
         c.execute((Path(__file__).parents[1]/'sql/004_admin_workspace.sql').read_text())
+        c.execute((Path(__file__).parents[1]/'sql/006_translation_memory.sql').read_text())
     return Workspace(store.dsn)
 
 
@@ -354,3 +355,227 @@ def test_run_with_only_superseded_tasks_is_not_generation_success(workspace,cont
     run=workspace.runs()[0]
     assert run['status']=='skipped' and run['counts']=={'skipped':1}
     assert run['lessons'][0]['errors']==['manual_edit_preserved']
+
+
+def clone_context(workspace,context):
+    """Same sources in a different chapter, with independent content IDs."""
+    from psycopg import sql
+    from psycopg.types.json import Jsonb
+    result=copy.deepcopy(context)
+    result['unit']['id']=str(uuid4());result['lesson']['id']=str(uuid4());result['lesson']['unit_id']=result['unit']['id']
+    ids={}
+    for item in result['items']:
+        old=item['id'];item['id']=str(uuid4());item['lesson_id']=result['lesson']['id'];ids[old]=item['id']
+    for exercise in result['exercises']:
+        exercise['id']=str(uuid4());exercise['lesson_item_id']=ids[exercise['lesson_item_id']]
+    with workspace.connect() as c:
+        for table,rows in [('units',[result['unit']]),('lessons',[result['lesson']]),('lesson_items',result['items']),('exercises',result['exercises'])]:
+            columns=[r['column_name'] for r in c.execute('SELECT column_name FROM information_schema.columns WHERE table_schema=%s AND table_name=%s ORDER BY ordinal_position',('public',table)).fetchall()]
+            for row in rows:
+                values=[Jsonb(row[k]) if isinstance(row.get(k),(dict,list)) else row.get(k,1 if k=='position' else None) for k in columns]
+                c.execute(sql.SQL('INSERT INTO {} ({}) VALUES ({})').format(sql.Identifier(table),sql.SQL(',').join(map(sql.Identifier,columns)),sql.SQL(',').join(sql.Placeholder() for _ in columns)),values)
+    return result
+
+
+@pytest.fixture
+def memory_context(workspace,context):
+    result=copy.deepcopy(context)
+    result['lesson']['title']='Hello!'
+    with workspace.connect() as c:
+        c.execute("UPDATE public.lessons SET title='Hello!' WHERE id=%s",(result['lesson']['id'],))
+    return result
+
+
+def test_memory_reuses_across_chapters_without_inference(workspace,memory_context,provider,monkeypatch):
+    context=memory_context
+    save(workspace,context,field_of(workspace,context),'ترجمهٔ مشترک')
+    other=clone_context(workspace,context);target=field_of(workspace,other)
+    preview=workspace.preview_queue([other['lesson']['id']],'fa',[target['key']])
+    assert preview['reusable']==1 and preview['fresh']==0
+    before=workspace.context(other['lesson']['id'])
+    result=workspace.enqueue([other['lesson']['id']],'fa',provider,5,[target['key']],False,'admin')
+    assert result['reused']==1 and result['queued']==0 and result['fresh']==0
+    current=field_of(workspace,other)
+    assert current['translation']=='ترجمهٔ مشترک' and current['origin']=='memory' and current['status']=='draft'
+    assert current['memory_source_id'] and workspace.context(other['lesson']['id'])==before
+    class Config:
+        def get(self,identity): pytest.fail('Reuse must not resolve paid credentials')
+    monkeypatch.setattr('localizer.admin_worker.call',lambda *a:pytest.fail('No inference'))
+    assert Worker(workspace,Config()).claim() is None
+    run=workspace.runs()[0]
+    assert run['counts']=={'reused':1} and run['estimated_usd']==0 and run['reserved_usd']==0
+
+
+def test_memory_separates_language_purpose_context_and_rules(workspace,memory_context,monkeypatch):
+    context=memory_context
+    from localizer.admin_memory import memory_key
+    field=field_of(workspace,context);save(workspace,context,field)
+    other=clone_context(workspace,context);target=field_of(workspace,other)
+    assert workspace.preview_queue([other['lesson']['id']],'ckb',[target['key']])['fresh']==1
+    source=workspace.context(context['lesson']['id']);key=memory_key(source,field,'fa')
+    changed=copy.deepcopy(source);changed['course']['language']='fr'
+    assert memory_key(changed,field,'fa')!=key
+    changed=copy.deepcopy(source);changed['lesson']['title']='Another meaning'
+    assert memory_key(changed,field,'fa')!=key
+    assert memory_key(source,{**field,'path':'objective.summary'},'fa')!=key
+    monkeypatch.setattr('localizer.admin_memory.versions',lambda:('changed-instructions','changed-glossary'))
+    assert workspace.preview_queue([other['lesson']['id']],'fa',[target['key']])['fresh']==1
+
+
+def test_memory_conflicts_and_review_findings_do_not_cause_paid_retry(workspace,memory_context,provider):
+    context=memory_context
+    save(workspace,context,field_of(workspace,context),'ترجمهٔ اول')
+    second=clone_context(workspace,context);save(workspace,second,field_of(workspace,second),'ترجمهٔ متفاوت')
+    third=clone_context(workspace,context);target=field_of(workspace,third)
+    assert workspace.preview_queue([third['lesson']['id']],'fa',[target['key']])['review']==1
+    result=workspace.enqueue([third['lesson']['id']],'fa',provider,5,[target['key']],False,'admin')
+    assert result['queued']==0 and result['review']==1
+    assert field_of(workspace,third)['error_code']=='translation_memory_requires_review'
+    with workspace.connect() as c:
+        c.execute("UPDATE localization_admin.segments SET issues='[\"reviewer_meaning_concern\"]' WHERE translation<>''")
+    fourth=clone_context(workspace,context);target=field_of(workspace,fourth)
+    assert workspace.preview_queue([fourth['lesson']['id']],'fa',[target['key']])['review']==1
+
+
+def test_stale_memory_source_is_not_reused(workspace,memory_context):
+    context=memory_context
+    save(workspace,context,field_of(workspace,context))
+    other=clone_context(workspace,context);target=field_of(workspace,other)
+    with workspace.connect() as c:
+        c.execute("UPDATE public.lessons SET title='Changed source' WHERE id=%s",(context['lesson']['id'],))
+    assert workspace.preview_queue([other['lesson']['id']],'fa',[target['key']])['fresh']==1
+
+
+def test_duplicate_fields_share_one_generation_and_review(workspace,memory_context,provider,monkeypatch):
+    context=memory_context
+    other=clone_context(workspace,context);field=field_of(workspace,context);target=field_of(workspace,other)
+    first=workspace.enqueue([context['lesson']['id']],'fa',provider,5,[field['key']],False,'admin')
+    assert workspace.preview_queue([other['lesson']['id']],'fa',[target['key']])['waiting']==1
+    second=workspace.enqueue([other['lesson']['id']],'fa',provider,5,[target['key']],False,'admin')
+    assert first['fresh']==1 and second['fresh']==0 and second['waiting']==1
+    class Config:
+        def get(self,identity): return provider
+    calls=[]
+    def generate(p,i,t,s,m): calls.append(t);return fake_result(i,t,s),{'input_tokens':10,'output_tokens':10,'incomplete':False}
+    monkeypatch.setattr('localizer.admin_worker.call',generate)
+    worker=Worker(workspace,Config());worker.process(worker.claim());assert worker.claim() is None
+    assert len(calls)==2 and field_of(workspace,other)['origin']=='memory'
+    run=next(r for r in workspace.runs() if str(r['id'])==second['run_id'])
+    assert run['status']=='completed' and run['counts']=={'reused':1} and run['reserved_usd']==0 and run['estimated_usd']==0
+
+
+def test_unknown_shared_result_never_submits_follower_inference(workspace,memory_context,provider,monkeypatch):
+    context=memory_context
+    other=clone_context(workspace,context);field=field_of(workspace,context);target=field_of(workspace,other)
+    workspace.enqueue([context['lesson']['id']],'fa',provider,5,[field['key']],False,'admin')
+    second=workspace.enqueue([other['lesson']['id']],'fa',provider,5,[target['key']],False,'admin')
+    class Config:
+        def get(self,identity): return provider
+    calls=[]
+    def fail(*a): calls.append(1);raise HostedError('provider_outcome_unknown')
+    monkeypatch.setattr('localizer.admin_worker.call',fail)
+    worker=Worker(workspace,Config());worker.process(worker.claim());assert worker.claim() is None
+    assert len(calls)==1 and field_of(workspace,other)['error_code']=='shared_translation_requires_review'
+    run=next(r for r in workspace.runs() if str(r['id'])==second['run_id'])
+    assert run['status']=='failed' and run['estimated_usd']==0 and run['reserved_usd']==0
+
+
+def test_memory_rechecked_before_submission_and_force_bypasses_it(workspace,memory_context,provider,monkeypatch):
+    context=memory_context
+    other=clone_context(workspace,context);field=field_of(workspace,context)
+    workspace.enqueue([context['lesson']['id']],'fa',provider,5,[field['key']],False,'admin')
+    save(workspace,other,field_of(workspace,other),'ترجمهٔ تازهٔ دستی')
+    class Config:
+        def get(self,identity): return provider
+    calls=[]
+    def generate(p,i,t,s,m): calls.append(t);return fake_result(i,t,s),{'input_tokens':1,'output_tokens':1,'incomplete':False}
+    monkeypatch.setattr('localizer.admin_worker.call',generate)
+    worker=Worker(workspace,Config());worker.process(worker.claim());worker.claim()
+    assert calls==[] and field_of(workspace,context)['translation']=='ترجمهٔ تازهٔ دستی'
+    assert workspace.runs()[0]['counts']=={'reused':1}
+    preview=workspace.preview_queue([context['lesson']['id']],'fa',[field['key']],True)
+    assert preview['fresh']==1 and preview['reusable']==0
+    workspace.enqueue([context['lesson']['id']],'fa',provider,5,[field['key']],True,'admin')
+    worker.process(worker.claim())
+    assert len(calls)==2 and field_of(workspace,context)['origin']=='machine'
+
+
+def test_bulk_publication_versioned_partial_and_idempotent(workspace,memory_context):
+    context=memory_context
+    other=clone_context(workspace,context)
+    save(workspace,context,field_of(workspace,context),'ترجمهٔ درس اول')
+    save(workspace,other,field_of(workspace,other),'ترجمهٔ درس دوم')
+    preview=workspace.prepare_publication([context['lesson']['id'],other['lesson']['id']],'fa','admin')
+    assert preview['fields']==2
+    save(workspace,context,field_of(workspace,context),'ویرایش بعد از پیش‌نمایش')
+    with pytest.raises(ValueError,match='publication_batch_not_found'):
+        workspace.publish_batch(preview['batch_id'],'another-admin')
+    result=workspace.publish_batch(preview['batch_id'],'admin')
+    assert result['published_lessons']==1 and result['published_fields']==1
+    assert result['failed'][0]['lesson_id']==context['lesson']['id'] and result['failed'][0]['code']=='draft_changed_reload'
+    assert field_of(workspace,context)['status']=='draft' and field_of(workspace,other)['status']=='published'
+    assert workspace.publish_batch(preview['batch_id'],'admin')==result
+    assert workspace.context(other['lesson']['id'])['lesson']['title']==context['lesson']['title']
+
+
+def test_bulk_publication_preview_expires(workspace,memory_context):
+    context=memory_context
+    save(workspace,context,field_of(workspace,context))
+    preview=workspace.prepare_publication([context['lesson']['id']],'fa','admin')
+    with workspace.connect() as c:
+        c.execute("UPDATE localization_admin.publication_batches SET created_at=now()-interval '11 minutes' WHERE id=%s",(preview['batch_id'],))
+    with pytest.raises(ValueError,match='publication_preview_expired'):
+        workspace.publish_batch(preview['batch_id'],'admin')
+    with pytest.raises(ValueError,match='batch_publication_scope_required'):
+        workspace.prepare_publication([],'fa','admin')
+
+
+def test_reused_phrase_publication_preserves_dictionary_origin_contract(workspace,memory_context,provider):
+    context=memory_context
+    save(workspace,context,field_of(workspace,context,'lesson_item'),'من انگلیسی صحبت می‌کنم.')
+    other=clone_context(workspace,context);target=field_of(workspace,other,'lesson_item')
+    result=workspace.enqueue([other['lesson']['id']],'fa',provider,5,[target['key']],False,'admin')
+    assert result['reused']==1
+    draft=field_of(workspace,other,'lesson_item')
+    with workspace.connect() as c:
+        c.execute("ALTER TABLE public.content_translations ADD CONSTRAINT test_public_origin CHECK(origin IN ('human','machine','source'))")
+    workspace.publish(other['lesson']['id'],'fa',[draft['key']],{draft['key']:draft['revision']},'admin')
+    assert field_of(workspace,other,'lesson_item')['status']=='published'
+    with workspace.connect() as c:
+        assert c.execute('SELECT origin FROM public.content_translations').fetchone()['origin']=='machine'
+
+
+def test_bootstrap_indexes_existing_drafts_without_rekeying_old_rules(workspace,memory_context,monkeypatch):
+    context=memory_context
+    save(workspace,context,field_of(workspace,context))
+    with workspace.connect() as c:
+        c.execute('DELETE FROM localization_admin.memory_entries')
+    assert workspace.index_memory()==1
+    other=clone_context(workspace,context);target=field_of(workspace,other)
+    assert workspace.preview_queue([other['lesson']['id']],'fa',[target['key']])['reusable']==1
+    monkeypatch.setattr('localizer.admin_memory.versions',lambda:('new-rules','new-glossary'))
+    assert workspace.index_memory()==0
+    assert workspace.preview_queue([other['lesson']['id']],'fa',[target['key']])['fresh']==1
+
+
+def test_cancel_waiting_releases_the_target_field(workspace,memory_context,provider):
+    context=memory_context;other=clone_context(workspace,context)
+    field=field_of(workspace,context);target=field_of(workspace,other)
+    workspace.enqueue([context['lesson']['id']],'fa',provider,5,[field['key']],False,'admin')
+    follower=workspace.enqueue([other['lesson']['id']],'fa',provider,5,[target['key']],False,'admin')
+    workspace.control(follower['run_id'],'cancelled','admin')
+    assert field_of(workspace,other)['status']=='missing'
+    again=workspace.enqueue([other['lesson']['id']],'fa',provider,5,[target['key']],False,'admin')
+    assert again['waiting']==1
+
+
+def test_bulk_retry_recognizes_publication_committed_before_receipt(workspace,memory_context):
+    context=memory_context;other=clone_context(workspace,context)
+    for lesson in (context,other): save(workspace,lesson,field_of(workspace,lesson))
+    preview=workspace.prepare_publication([context['lesson']['id'],other['lesson']['id']],'fa','admin')
+    field=field_of(workspace,context)
+    workspace.publish(context['lesson']['id'],'fa',[field['key']],{field['key']:field['revision']},'admin')
+    result=workspace.publish_batch(preview['batch_id'],'admin')
+    assert result=={'published_lessons':2,'published_fields':2,'failed':[]}
+    with workspace.connect() as c:
+        assert c.execute("SELECT count(*) n FROM localization_admin.audit WHERE action='publish'").fetchone()['n']==2

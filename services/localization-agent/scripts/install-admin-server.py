@@ -49,6 +49,7 @@ def main():
     helper=importlib.util.module_from_spec(spec); spec.loader.exec_module(helper)
     password=secrets.token_urlsafe(36); token=secrets.token_urlsafe(48)
     migration=(ROOT/'sql/004_admin_workspace.sql').read_text().replace('BEGIN;',"BEGIN;\nSET LOCAL log_statement='none';\nSET LOCAL log_min_duration_statement=-1;\nSET LOCAL log_duration=off;\nSET LOCAL log_min_error_statement='panic';",1).rsplit('COMMIT;',1)[0]
+    migration+=(ROOT/'sql/006_translation_memory.sql').read_text().replace('BEGIN;','').replace('COMMIT;','')
     migration+='''
 CREATE ROLE localization_admin_service LOGIN;
 GRANT USAGE ON SCHEMA public,localization,localization_admin TO localization_admin_service;

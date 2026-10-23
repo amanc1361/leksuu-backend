@@ -28,13 +28,14 @@ class Worker:
                 c.execute("UPDATE localization_admin.runs SET status='paused' WHERE id=%s AND status='running'",(row['run_id'],))
 
     def claim(self):
+        self.store.resolve_waiting()
         with self.store.connect() as c:
             task=c.execute("SELECT t.*,s.lesson_id,s.field_key,s.source_hash,s.locale,r.provider_id,r.provider_snapshot FROM localization_admin.tasks t JOIN localization_admin.runs r ON r.id=t.run_id JOIN localization_admin.segments s ON s.id=t.segment_id WHERE t.status='pending' AND r.status='running' ORDER BY t.created_at,t.id FOR UPDATE OF t SKIP LOCKED LIMIT 1").fetchone()
             if task:
                 c.execute("UPDATE localization_admin.tasks SET status='running',updated_at=now() WHERE id=%s",(task['id'],))
                 c.execute("UPDATE localization_admin.segments SET status='running' WHERE id=%s AND revision=%s",(task['segment_id'],task['expected_revision']))
             else:
-                c.execute("UPDATE localization_admin.runs r SET status=CASE WHEN EXISTS(SELECT 1 FROM localization_admin.tasks t WHERE t.run_id=r.id AND t.status IN ('failed','unknown')) THEN 'failed' WHEN EXISTS(SELECT 1 FROM localization_admin.tasks t WHERE t.run_id=r.id AND t.status='completed') THEN 'completed' ELSE 'skipped' END WHERE r.status='running' AND NOT EXISTS(SELECT 1 FROM localization_admin.tasks t WHERE t.run_id=r.id AND t.status IN ('pending','running'))")
+                c.execute("UPDATE localization_admin.runs r SET status=CASE WHEN EXISTS(SELECT 1 FROM localization_admin.tasks t WHERE t.run_id=r.id AND t.status IN ('failed','unknown')) THEN 'failed' WHEN EXISTS(SELECT 1 FROM localization_admin.tasks t WHERE t.run_id=r.id AND t.status IN ('completed','reused')) THEN 'completed' ELSE 'skipped' END WHERE r.status='running' AND NOT EXISTS(SELECT 1 FROM localization_admin.tasks t WHERE t.run_id=r.id AND t.status IN ('pending','running','waiting'))")
             return task
 
     def reserve(self,task,provider,prompt,schema):
@@ -70,6 +71,8 @@ class Worker:
 
     def process(self,task):
         try:
+            if self.store.reuse_task(task):
+                return
             provider=self.providers.get(task['provider_id']) | task['provider_snapshot']
             context=self.store.context(task['lesson_id'])
             mapping=plan(context)
@@ -99,7 +102,8 @@ class Worker:
                     c.execute("UPDATE localization_admin.tasks SET status='skipped',error_code='manual_edit_preserved' WHERE id=%s",(task['id'],))
                     return
                 candidate=bundle.translations[0]
-                c.execute("UPDATE localization_admin.segments SET translation=%s,origin='machine',status='draft',issues=%s,provider_id=%s,model=%s,error_code=NULL,revision=revision+1,updated_at=now() WHERE id=%s",(candidate.text,Jsonb(issues[field['key']]),provider['id'],provider['model'],record['id']))
+                c.execute("UPDATE localization_admin.segments SET translation=%s,origin='machine',memory_source_id=NULL,status='draft',issues=%s,provider_id=%s,model=%s,error_code=NULL,revision=revision+1,updated_at=now() WHERE id=%s",(candidate.text,Jsonb(issues[field['key']]),provider['id'],provider['model'],record['id']))
+                self.store.remember(c,current,field,task['locale'],record['id'])
                 c.execute("UPDATE localization_admin.tasks SET status='completed',review=%s,updated_at=now() WHERE id=%s",(Jsonb(review.model_dump()),task['id']))
                 self.store.audit(c,'worker','ai_draft',record['id'],{'model':provider['model'],'task_id':str(task['id']),'before':record['translation'],'after':candidate.text})
         except Exception as error:
