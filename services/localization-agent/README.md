@@ -190,3 +190,13 @@ localization با pg_dump نسخهٔ پشتیبان بگیرید؛ secret اتص
 جدول‌ها/متن‌های اپلیکیشن دست‌نخورده‌اند. برای حذف نقش پس از حذف schema، DBA مجوزهای
 SELECT مبدأ را با `DROP OWNED BY localization_service` در همین دیتابیس لغو و سپس
 `DROP ROLE localization_service` اجرا کند. نقش را در دیتابیس‌های دیگر مشترک نکنید.
+# Gemini pilot
+
+For the Gemini chapter pilot using the same educational mapping, glossary and
+validators, see [راهنمای اجرای Gemini](docs/gemini-fa.md). It produces private draft
+artifacts and defaults to dry-run: `python -m localizer.gemini --help`.
+
+## Admin translation workspace
+
+The admin-only translation console, provider settings, durable field queue, manual
+edits and explicit publication are documented in [راهنمای پنل ترجمه](docs/admin-workspace-fa.md).

@@ -30,15 +30,14 @@ def english(value):
 
 def plan(context):
     fields, ambiguous = [], []
+    source_language = context['course']['language']
 
     def add(kind, row, path, value):
-        text = english(value)
+        text = value.get(source_language) if isinstance(value, dict) else value
         if isinstance(text, str) and text.strip():
-            fields.append(Field(kind, str(row['id']), path + ('.en' if isinstance(value, dict) else ''), text))
+            fields.append(Field(kind, str(row['id']), path + ('.'+source_language if isinstance(value, dict) else ''), text))
 
     lesson = context['lesson']
-    if context['course']['language'] != 'en':
-        raise ValueError('only_english_courses_supported')
     add('lesson', lesson, 'title', lesson.get('title'))
     objective = lesson.get('objective') or {}
     for name in ('summary', 'tip'):
@@ -47,7 +46,7 @@ def plan(context):
         add('lesson', lesson, f'objective.points.{index}', point)
     for row in context.get('items', []):
         payload = row.get('payload') or {}
-        if row['kind'] == 'grammar' and payload.get('source_lang', 'en') == 'en':
+        if row['kind'] == 'grammar' and payload.get('source_lang', source_language) == source_language:
             for name in ('title', 'rule'):
                 add('lesson_item', row, f'payload.{name}', payload.get(name))
         elif row['kind'] == 'text' and isinstance(payload.get('phrase'), str):
@@ -60,7 +59,7 @@ def plan(context):
         for name in ('instruction', 'explanation'):
             add('exercise', row, f'prompt.{name}', prompt.get(name))
         if 'question' in prompt:
-            question = english(prompt['question'])
+            question = prompt['question'].get(source_language) if isinstance(prompt['question'], dict) else prompt['question']
             if isinstance(question, str) and re.match(r'^(Choose|Select|Listen and choose|Which (?:word|sentence|option))\b', question) and not re.search(r'_{2,}|\{[^}]*\}', question):
                 add('exercise', row, 'prompt.question', prompt['question'])
             else:

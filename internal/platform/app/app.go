@@ -194,9 +194,11 @@ func New(cfg config.Config) (*App, error) {
 	})
 
 	adminModule := admin.New(admin.Deps{
-		Repo:  repos.authoring,
-		Vocab: repos.srs,
-		Guard: authModule.Authenticator(),
+		Repo:              repos.authoring,
+		Vocab:             repos.srs,
+		Guard:             authModule.Authenticator(),
+		LocalizationURL:   cfg.LocalizationURL,
+		LocalizationToken: cfg.LocalizationToken,
 	})
 
 	courseModule := course.New(course.Deps{
