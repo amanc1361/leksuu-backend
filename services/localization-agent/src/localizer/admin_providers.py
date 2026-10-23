@@ -37,9 +37,10 @@ class Providers:
         return [json.loads(p.read_text()) for p in sorted(self.directory.glob('*.json'))]
 
     def public(self):
-        return [{k: v for k, v in p.items() if k != 'api_key'} | {'has_key': bool(p.get('api_key'))} for p in self.all()]
+        return [{k: v for k, v in self.get(p['id']).items() if k != 'api_key'} |
+                {'has_key': bool(self.get(p['id']).get('api_key'))} for p in self.all()]
 
-    def get(self, identity):
+    def _read(self, identity):
         if not re.fullmatch(r'[0-9a-f-]{36}', identity or ''):
             raise ValueError('provider_not_found')
         path = self.directory / (identity + '.json')
@@ -47,26 +48,53 @@ class Providers:
             raise ValueError('provider_not_found')
         return json.loads(path.read_text())
 
+    def get(self, identity):
+        value = self._read(identity)
+        parent_id = value.get('connection_id')
+        if parent_id:
+            parent = self._read(parent_id)
+            if parent.get('connection_id'):
+                raise ValueError('invalid_model_connection')
+            value.update(api_key=parent['api_key'], kind=parent['kind'],
+                         base_url=parent['base_url'], connection_name=parent['name'])
+        else:
+            value.update(connection_id=value['id'], connection_name=value['name'])
+        value.setdefault('notes', '')
+        return value
+
     def save(self, data):
         identity = data.get('id') or str(uuid4())
-        old = self.get(identity) if data.get('id') else {}
-        kind = data.get('kind', 'openai')
+        old = self._read(identity) if data.get('id') else {}
+        parent_id = data.get('connection_id') or old.get('connection_id')
+        if parent_id == identity:
+            parent_id = None
+        parent = self._read(parent_id) if parent_id else None
+        if parent and parent.get('connection_id'):
+            raise ValueError('invalid_model_connection')
+        if old and parent_id != old.get('connection_id'):
+            raise ValueError('invalid_model_connection')
+        kind = parent['kind'] if parent else data.get('kind', 'openai')
         if kind not in ('openai', 'gemini', 'compatible'):
             raise ValueError('unsupported_provider_kind')
         base = {'openai': 'https://api.openai.com/v1',
                 'gemini': 'https://generativelanguage.googleapis.com/v1beta'}.get(kind, data.get('base_url', ''))
+        if parent:
+            base = parent['base_url']
         model = str(data.get('model', '')).strip()
         if not re.fullmatch(r'[A-Za-z0-9_.:/-]{1,150}', model):
             raise ValueError('model_name_required')
         rates = [float(data.get(k, 0)) for k in ('input_rate', 'output_rate')]
         if any(not math.isfinite(v) or v <= 0 or v > 1000 for v in rates):
             raise ValueError('positive_token_prices_required')
-        api_key = str(data.get('api_key') or old.get('api_key', '')).strip()
+        api_key = str(parent['api_key'] if parent else data.get('api_key') or old.get('api_key', '')).strip()
         if not api_key or len(api_key) > 4096 or '\n' in api_key or '\r' in api_key:
             raise ValueError('api_key_required')
         value = dict(id=identity, name=str(data.get('name', kind))[:120], kind=kind,
                      base_url=endpoint(base), model=model, api_key=api_key,
-                     input_rate=rates[0], output_rate=rates[1])
+                     input_rate=rates[0], output_rate=rates[1], notes=str(data.get('notes', ''))[:1000])
+        if parent:
+            value.pop('api_key')
+            value['connection_id'] = parent_id
         Hosted.persist(None, self.directory / (identity + '.json'), value)
         return next(p for p in self.public() if p['id'] == identity)
 

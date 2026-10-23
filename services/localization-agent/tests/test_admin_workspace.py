@@ -270,3 +270,27 @@ def test_non_english_mapper_uses_course_source_language(context):
     context['lesson']['objective']={'summary':{'de':'Zusammenfassung','en':'Not the source'}}
     mapped=plan(context)
     assert next(f for f in mapped['fields'] if f['path']=='objective.summary.de')['text']=='Zusammenfassung'
+
+
+def test_model_catalog_reuses_connection_and_rotates_shared_key(tmp_path, monkeypatch):
+    monkeypatch.setattr('localizer.admin_providers.endpoint', lambda value: value)
+    config = Providers(tmp_path)
+    root = config.save(dict(name='OpenAI', kind='openai', model='model-a', api_key='SECRET', input_rate=2, output_rate=10))
+    child = config.save(dict(connection_id=root['id'], name='Economical', model='model-b', input_rate=.1, output_rate=.4, notes='Quick drafts', kind='compatible', base_url='https://wrong.example', api_key='IGNORED'))
+    assert child['connection_id'] == root['id']
+    assert child['kind'] == 'openai' and child['base_url'] == root['base_url']
+    assert child['notes'] == 'Quick drafts' and child['input_rate'] == .1
+    assert config.get(child['id'])['api_key'] == 'SECRET'
+    stored = json.loads((tmp_path / (child['id'] + '.json')).read_text())
+    assert 'api_key' not in stored
+    config.save({**root, 'api_key': 'ROTATED'})
+    assert config.get(child['id'])['api_key'] == 'ROTATED'
+    edited = config.save({**child, 'output_rate': .8, 'api_key': ''})
+    assert edited['output_rate'] == .8
+    assert 'ROTATED' not in json.dumps(config.public())
+    assert 'SECRET' not in json.dumps(config.public())
+    assert config.get(root['id'])['model'] == 'model-a'
+    with pytest.raises(ValueError, match='invalid_model_connection'):
+        config.save(dict(connection_id=child['id'], model='model-c', input_rate=1, output_rate=2))
+    with pytest.raises(ValueError, match='invalid_model_connection'):
+        config.save({**root, 'connection_id': child['id']})
