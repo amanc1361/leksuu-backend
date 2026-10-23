@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS localization_admin.runs (
  locale text NOT NULL CHECK(locale IN ('fa','ckb')),
  status text NOT NULL DEFAULT 'running', budget_usd numeric NOT NULL CHECK(budget_usd>0),
  reserved_usd numeric NOT NULL DEFAULT 0, estimated_usd numeric NOT NULL DEFAULT 0,
- provider_snapshot jsonb NOT NULL,
+ provider_snapshot jsonb NOT NULL, scope jsonb NOT NULL DEFAULT '[]',
  created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS localization_admin.tasks (
@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS localization_admin.tasks (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS admin_segment_active ON localization_admin.tasks(segment_id)
  WHERE status IN ('pending','running');
+CREATE INDEX IF NOT EXISTS admin_tasks_run ON localization_admin.tasks(run_id);
 CREATE INDEX IF NOT EXISTS admin_tasks_queue ON localization_admin.tasks(status,created_at);
 CREATE TABLE IF NOT EXISTS localization_admin.audit (
  id bigserial PRIMARY KEY, actor text NOT NULL, action text NOT NULL,

@@ -294,3 +294,63 @@ def test_model_catalog_reuses_connection_and_rotates_shared_key(tmp_path, monkey
         config.save(dict(connection_id=child['id'], model='model-c', input_rate=1, output_rate=2))
     with pytest.raises(ValueError, match='invalid_model_connection'):
         config.save({**root, 'connection_id': child['id']})
+
+
+def test_run_history_identifies_legacy_lesson_and_distinguishes_draft_publication(workspace, context, provider, monkeypatch):
+    field=field_of(workspace,context)
+    class Config:
+        def get(self, identity): return provider
+    monkeypatch.setattr('localizer.admin_worker.call',lambda p,i,t,s,m: (fake_result(i,t,s),{'input_tokens':10,'output_tokens':10,'incomplete':False}))
+    result=workspace.enqueue([context['lesson']['id']],'fa',provider,5,[field['key']],False,'admin')
+    worker=Worker(workspace,Config());worker.process(worker.claim());worker.claim()
+    # Existing production runs have no stored scope: reconstruct it from their tasks.
+    with workspace.connect() as c:
+        c.execute("UPDATE localization_admin.runs SET scope='[]' WHERE id=%s",(result['run_id'],))
+    run=workspace.runs()[0];scope=run['lessons'][0]
+    assert scope['lesson_title']==context['lesson']['title']
+    assert scope['course_title']==context['course']['title']
+    assert scope['unit_title']==context['unit']['title']
+    assert scope['lesson_id']==context['lesson']['id']
+    assert run['status']=='completed' and run['counts']=={'completed':1}
+    assert run['drafts']==1 and run['published']==0
+    assert 'provider_snapshot' not in run
+    draft=next(f for f in workspace.lesson(context['lesson']['id'],'fa')['fields'] if f['key']==field['key'])
+    workspace.publish(context['lesson']['id'],'fa',[field['key']],{field['key']:draft['revision']},'admin')
+    run=workspace.runs()[0]
+    assert run['drafts']==0 and run['published']==1
+
+
+def test_fully_skipped_run_retains_selected_scope_without_success_claim(workspace,context,provider):
+    first=workspace.enqueue([context['lesson']['id']],'fa',provider,5,[],False,'admin')
+    second=workspace.enqueue([context['lesson']['id']],'fa',provider,5,[],False,'admin')
+    assert second['queued']==0
+    runs=workspace.runs();run=next(r for r in runs if str(r['id'])==second['run_id'])
+    assert run['status']=='skipped' and run['counts']=={}
+    assert run['lessons'][0]['lesson_title']==context['lesson']['title']
+    assert run['lessons'][0]['fields']==0
+    assert len(runs)==2
+
+
+def test_run_history_surfaces_provider_errors(workspace,context,provider,monkeypatch):
+    class Config:
+        def get(self, identity): return provider
+    def fail(*args): raise HostedError('provider_http_429')
+    monkeypatch.setattr('localizer.admin_worker.call',fail)
+    workspace.enqueue([context['lesson']['id']],'fa',provider,5,[],False,'admin')
+    worker=Worker(workspace,Config());worker.process(worker.claim())
+    run=workspace.runs()[0]
+    assert run['status']=='paused'
+    assert run['lessons'][0]['errors']==['provider_http_429']
+
+
+def test_run_with_only_superseded_tasks_is_not_generation_success(workspace,context,provider):
+    field=field_of(workspace,context)
+    class Config:
+        def get(self, identity): return provider
+    workspace.enqueue([context['lesson']['id']],'fa',provider,5,[field['key']],False,'admin')
+    worker=Worker(workspace,Config());task=worker.claim()
+    save(workspace,context,field)
+    worker.process(task);worker.claim()
+    run=workspace.runs()[0]
+    assert run['status']=='skipped' and run['counts']=={'skipped':1}
+    assert run['lessons'][0]['errors']==['manual_edit_preserved']

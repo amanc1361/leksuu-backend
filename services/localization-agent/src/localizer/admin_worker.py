@@ -34,7 +34,7 @@ class Worker:
                 c.execute("UPDATE localization_admin.tasks SET status='running',updated_at=now() WHERE id=%s",(task['id'],))
                 c.execute("UPDATE localization_admin.segments SET status='running' WHERE id=%s AND revision=%s",(task['segment_id'],task['expected_revision']))
             else:
-                c.execute("UPDATE localization_admin.runs r SET status=CASE WHEN EXISTS(SELECT 1 FROM localization_admin.tasks t WHERE t.run_id=r.id AND t.status IN ('failed','unknown')) THEN 'failed' ELSE 'completed' END WHERE r.status='running' AND NOT EXISTS(SELECT 1 FROM localization_admin.tasks t WHERE t.run_id=r.id AND t.status IN ('pending','running'))")
+                c.execute("UPDATE localization_admin.runs r SET status=CASE WHEN EXISTS(SELECT 1 FROM localization_admin.tasks t WHERE t.run_id=r.id AND t.status IN ('failed','unknown')) THEN 'failed' WHEN EXISTS(SELECT 1 FROM localization_admin.tasks t WHERE t.run_id=r.id AND t.status='completed') THEN 'completed' ELSE 'skipped' END WHERE r.status='running' AND NOT EXISTS(SELECT 1 FROM localization_admin.tasks t WHERE t.run_id=r.id AND t.status IN ('pending','running'))")
             return task
 
     def reserve(self,task,provider,prompt,schema):

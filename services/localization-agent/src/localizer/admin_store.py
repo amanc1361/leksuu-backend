@@ -183,6 +183,7 @@ class Workspace(Store):
         self.locale(locale)
         if not 1 <= len(lesson_ids) <= 500 or not 0 < budget <= 50:
             raise ValueError('scope_and_budget_required')
+        lesson_ids=[str(UUID(identity)) for identity in lesson_ids]
         if keys and len(lesson_ids)!=1:
             raise ValueError('field_selection_requires_one_lesson')
         run_id = uuid4()
@@ -190,7 +191,10 @@ class Workspace(Store):
         with self.connect() as c:
             c.execute('SELECT pg_advisory_xact_lock(172901324)')
             snapshot={k:v for k,v in provider.items() if k!='api_key'}
-            c.execute('INSERT INTO localization_admin.runs(id,provider_id,model,locale,budget_usd,provider_snapshot) VALUES (%s,%s,%s,%s,%s,%s)', (run_id,provider['id'],provider['model'],locale,budget,Jsonb(snapshot)))
+            scope=self.run_scope(c,lesson_ids)
+            if len(scope)!=len(set(lesson_ids)):
+                raise ValueError('lesson_not_found')
+            c.execute('INSERT INTO localization_admin.runs(id,provider_id,model,locale,budget_usd,provider_snapshot,scope) VALUES (%s,%s,%s,%s,%s,%s,%s)', (run_id,provider['id'],provider['model'],locale,budget,Jsonb(snapshot),Jsonb(scope)))
             for lesson_id in dict.fromkeys(lesson_ids):
                 detail = self.lesson(str(UUID(lesson_id)),locale,c)
                 if keys and not set(keys)<=set(f['key'] for f in detail['fields']):
@@ -210,13 +214,51 @@ class Workspace(Store):
                     c.execute("UPDATE localization_admin.segments SET status='pending',error_code=NULL WHERE id=%s",(record['id'],))
                     queued+=1
             if not queued:
-                c.execute("UPDATE localization_admin.runs SET status='completed' WHERE id=%s",(run_id,))
+                c.execute("UPDATE localization_admin.runs SET status='skipped' WHERE id=%s",(run_id,))
             self.audit(c,actor,'enqueue',None,{'run_id':str(run_id),'queued':queued,'skipped':skipped,'budget_usd':budget,'force':force})
         return dict(run_id=str(run_id),queued=queued,skipped=skipped)
 
+    @staticmethod
+    def run_scope(c,lesson_ids):
+        rows=c.execute("""SELECT l.id lesson_id,l.title lesson_title,l.position lesson_position,
+            u.id unit_id,u.title unit_title,u.position unit_position,
+            c.id course_id,c.title course_title,c.language source_language,c.cefr_level
+            FROM public.lessons l JOIN public.courses c ON c.id=l.course_id
+            LEFT JOIN public.units u ON u.id=l.unit_id
+            WHERE l.id=ANY(%s::uuid[]) ORDER BY c.title,u.position,l.position,l.id""",(list(lesson_ids),)).fetchall()
+        return json.loads(json.dumps(rows,default=str))
+
     def runs(self):
         with self.connect() as c:
-            return c.execute("SELECT r.*,COALESCE(jsonb_object_agg(t.status,t.n) FILTER(WHERE t.status IS NOT NULL),'{}') counts FROM localization_admin.runs r LEFT JOIN (SELECT run_id,status,count(*) n FROM localization_admin.tasks GROUP BY run_id,status) t ON t.run_id=r.id GROUP BY r.id ORDER BY r.created_at DESC LIMIT 30").fetchall()
+            c.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
+            runs=c.execute("""SELECT r.id,r.model,r.locale,r.status,r.budget_usd,r.reserved_usd,
+                r.estimated_usd,r.created_at,r.scope,
+                COALESCE(jsonb_object_agg(t.status,t.n) FILTER(WHERE t.status IS NOT NULL),'{}') counts
+                FROM localization_admin.runs r LEFT JOIN
+                (SELECT run_id,status,count(*) n FROM localization_admin.tasks GROUP BY run_id,status) t
+                ON t.run_id=r.id GROUP BY r.id ORDER BY r.created_at DESC LIMIT 30""").fetchall()
+            if not runs:
+                return []
+            rows=c.execute("""SELECT t.run_id,s.lesson_id,count(*) fields,
+                count(*) FILTER(WHERE s.status='draft' AND s.translation<>'') drafts,
+                count(*) FILTER(WHERE s.status='published' AND s.translation<>'') published,
+                count(*) FILTER(WHERE s.issues<>'[]'::jsonb) review_fields,
+                COALESCE(jsonb_agg(DISTINCT t.error_code) FILTER(WHERE t.error_code IS NOT NULL),'[]') errors
+                FROM localization_admin.tasks t JOIN localization_admin.segments s ON s.id=t.segment_id
+                WHERE t.run_id=ANY(%s) GROUP BY t.run_id,s.lesson_id""",([r['id'] for r in runs],)).fetchall()
+            stats={(str(row['run_id']),str(row['lesson_id'])):row for row in rows}
+            # Old runs predate stored scope; reconstruct their original lesson names.
+            fallback={row['lesson_id']:row for row in self.run_scope(c,list({str(row['lesson_id']) for row in rows}))}
+            for run in runs:
+                identity=str(run['id'])
+                scope=run.pop('scope') or [fallback[str(row['lesson_id'])] for row in rows if str(row['run_id'])==identity]
+                run['lessons']=[]
+                for lesson in scope:
+                    counts=stats.get((identity,str(lesson['lesson_id'])),{})
+                    run['lessons'].append({**lesson,**{k:counts.get(k,[] if k=='errors' else 0) for k in ('fields','drafts','published','review_fields','errors')}})
+                run['drafts']=sum(l['drafts'] for l in run['lessons'])
+                run['published']=sum(l['published'] for l in run['lessons'])
+            return runs
 
     def control(self,run_id,status,actor):
         if status not in ('running','paused','cancelled'):
