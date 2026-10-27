@@ -116,6 +116,9 @@ class Worker:
                 c.execute('UPDATE localization_admin.segments SET status=%s,error_code=%s,updated_at=now() WHERE id=%s AND revision=%s',(status,code,task['segment_id'],task['expected_revision']))
                 if code in ('run_budget_exhausted','provider_http_401','provider_http_403','provider_http_429','provider_outcome_unknown'):
                     c.execute("UPDATE localization_admin.runs SET status='paused' WHERE id=%s",(task['run_id'],))
+                if code=='run_budget_exhausted':
+                    released=self.store.release_pending(c,task['run_id'])
+                    self.store.audit(c,'worker','budget_pause_release',None,{'run_id':str(task['run_id']),'released':released})
 
     def loop(self):
         self.recover()

@@ -264,6 +264,7 @@ class Workspace(MemoryMixin, BatchPublicationMixin, Store):
                 count(*) FILTER(WHERE s.status='draft' AND s.translation<>'') drafts,
                 count(*) FILTER(WHERE s.status='published' AND s.translation<>'') published,
                 count(*) FILTER(WHERE s.issues<>'[]'::jsonb) review_fields,
+                count(*) FILTER(WHERE t.status IN ('pending','waiting')) pending,
                 COALESCE(jsonb_agg(DISTINCT t.error_code) FILTER(WHERE t.error_code IS NOT NULL),'[]') errors
                 FROM localization_admin.tasks t JOIN localization_admin.segments s ON s.id=t.segment_id
                 WHERE t.run_id=ANY(%s) GROUP BY t.run_id,s.lesson_id""",([r['id'] for r in runs],)).fetchall()
@@ -276,10 +277,17 @@ class Workspace(MemoryMixin, BatchPublicationMixin, Store):
                 run['lessons']=[]
                 for lesson in scope:
                     counts=stats.get((identity,str(lesson['lesson_id'])),{})
-                    run['lessons'].append({**lesson,**{k:counts.get(k,[] if k=='errors' else 0) for k in ('fields','drafts','published','review_fields','errors')}})
+                    run['lessons'].append({**lesson,**{k:counts.get(k,[] if k=='errors' else 0) for k in ('fields','drafts','published','review_fields','pending','errors')}})
                 run['drafts']=sum(l['drafts'] for l in run['lessons'])
                 run['published']=sum(l['published'] for l in run['lessons'])
             return runs
+
+    def release_pending(self,c,run_id):
+        """Release only unsubmitted work, preserving edits and submitted outcomes."""
+        rows=c.execute("UPDATE localization_admin.tasks SET status='cancelled',updated_at=now() WHERE run_id=%s AND status IN ('pending','waiting') RETURNING segment_id,expected_revision",(run_id,)).fetchall()
+        for row in rows:
+            c.execute("UPDATE localization_admin.segments SET status=CASE WHEN translation<>'' THEN 'draft' ELSE 'missing' END,error_code=NULL,updated_at=now() WHERE id=%s AND revision=%s AND status='pending'",(row['segment_id'],row['expected_revision']))
+        return len(rows)
 
     def control(self,run_id,status,actor):
         if status not in ('running','paused','cancelled'):
@@ -287,9 +295,7 @@ class Workspace(MemoryMixin, BatchPublicationMixin, Store):
         with self.connect() as c:
             c.execute('UPDATE localization_admin.runs SET status=%s WHERE id=%s AND status IN (\'running\',\'paused\')', (status,UUID(run_id)))
             if status=='cancelled':
-                rows=c.execute("UPDATE localization_admin.tasks SET status='cancelled',updated_at=now() WHERE run_id=%s AND status IN ('pending','waiting') RETURNING segment_id",(run_id,)).fetchall()
-                for row in rows:
-                    c.execute("UPDATE localization_admin.segments SET status=CASE WHEN translation<>'' THEN 'draft' ELSE 'missing' END,error_code=NULL WHERE id=%s AND status='pending'",(row['segment_id'],))
+                self.release_pending(c,run_id)
             self.audit(c,actor,status,None,{'run_id':run_id})
 
     def publish(self,lesson_id,locale,keys,revisions,actor,replace_shared=False,expected_context_hash=None):

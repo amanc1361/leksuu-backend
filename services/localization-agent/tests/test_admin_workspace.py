@@ -217,9 +217,48 @@ def test_budget_exhaustion_makes_no_inference(workspace,context,provider,monkeyp
         def get(self,identity): return provider
     def unexpected(*args): pytest.fail('must reserve before inference')
     monkeypatch.setattr('localizer.admin_worker.call',unexpected)
-    workspace.enqueue([context['lesson']['id']],'fa',provider,0.000001,[],False,'admin')
+    lesson_id=context['lesson']['id']
+    field=field_of(workspace,context)
+    save(workspace,context,field)
+    first=workspace.enqueue([lesson_id],'fa',provider,0.000001,[],False,'admin')
     worker=Worker(workspace,Config()); worker.process(worker.claim())
     assert workspace.runs()[0]['status']=='paused'
+    assert worker.claim() is None
+    with workspace.connect() as c:
+        assert c.execute("SELECT count(*) n FROM localization_admin.tasks WHERE run_id=%s AND status IN ('pending','waiting','running')",(first['run_id'],)).fetchone()['n']==0
+        assert c.execute("SELECT count(*) n FROM localization_admin.tasks WHERE run_id=%s AND status='cancelled'",(first['run_id'],)).fetchone()['n']==first['queued']-1
+    detail=workspace.lesson(lesson_id,'fa')
+    assert next(f for f in detail['fields'] if f['key']==field['key'])['translation']=='ترجمهٔ آزمایشی'
+    assert not any(f['status'] in ('pending','running') for f in detail['fields'])
+    preview=workspace.preview_queue([lesson_id],'fa')
+    assert preview['active']==0 and preview['fresh']>0
+    second=workspace.enqueue([lesson_id],'fa',provider,5,[],False,'admin')
+    assert second['queued']==first['queued']
+
+
+def test_manual_pause_keeps_queue_resumable(workspace,context,provider):
+    run=workspace.enqueue([context['lesson']['id']],'fa',provider,5,[],False,'admin')
+    workspace.control(run['run_id'],'paused','admin')
+    worker=Worker(workspace,object())
+    assert worker.claim() is None
+    workspace.control(run['run_id'],'running','admin')
+    assert str(worker.claim()['run_id'])==run['run_id']
+
+
+def test_release_pending_preserves_newer_edit_and_restores_existing_draft(workspace,context,provider):
+    lesson_id=context['lesson']['id']
+    field=field_of(workspace,context)
+    save(workspace,context,field)
+    run=workspace.enqueue([lesson_id],'fa',provider,5,[field['key']],True,'admin')
+    workspace.control(run['run_id'],'cancelled','admin')
+    updated=next(f for f in workspace.lesson(lesson_id,'fa')['fields'] if f['key']==field['key'])
+    assert updated['status']=='draft' and updated['translation']=='ترجمهٔ آزمایشی'
+    run=workspace.enqueue([lesson_id],'fa',provider,5,[field['key']],True,'admin')
+    with workspace.connect() as c:
+        c.execute("UPDATE localization_admin.segments SET revision=revision+1,error_code='newer_state' WHERE id=%s",(updated['id'],))
+    workspace.control(run['run_id'],'cancelled','admin')
+    with workspace.connect() as c:
+        assert c.execute('SELECT error_code FROM localization_admin.segments WHERE id=%s',(updated['id'],)).fetchone()['error_code']=='newer_state'
 
 
 def test_provider_keys_are_redacted_and_preserved_on_edit(tmp_path,monkeypatch):
