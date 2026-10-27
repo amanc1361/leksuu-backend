@@ -7,9 +7,11 @@ import (
 	"context"
 	"encoding/json"
 	"regexp"
+	"sort"
 	"strings"
 
 	coursedomain "github.com/leksuu/platform/internal/modules/course/domain"
+	mediadomain "github.com/leksuu/platform/internal/modules/media/domain"
 	srsdomain "github.com/leksuu/platform/internal/modules/srs/domain"
 	"github.com/leksuu/platform/internal/shared/apperr"
 )
@@ -50,6 +52,8 @@ type Repository interface {
 	SetAccessRule(ctx context.Context, rule coursedomain.AccessRule) error
 	DeleteAccessRule(ctx context.Context, entityType, entityID string) error
 	ListAccessRules(ctx context.Context) ([]coursedomain.AccessRule, error)
+	SaveImportSource(ctx context.Context, src *coursedomain.ImportSource) error
+	ListImportSources(ctx context.Context, limit, offset int) ([]coursedomain.ImportSource, int, error)
 }
 
 // VocabStore is the admin-facing slice of the vocabulary bank (vocabulary_items),
@@ -63,13 +67,28 @@ type VocabStore interface {
 }
 
 type Service struct {
-	repo  Repository
-	vocab VocabStore
+	repo         Repository
+	vocab        VocabStore
+	store        mediadomain.Store
+	bulkMaxBytes int64
 }
 
-func NewService(repo Repository, vocab VocabStore) *Service {
-	return &Service{repo: repo, vocab: vocab}
+func NewService(repo Repository, vocab VocabStore, stores ...mediadomain.Store) *Service {
+	var store mediadomain.Store
+	if len(stores) > 0 {
+		store = stores[0]
+	}
+	return &Service{repo: repo, vocab: vocab, store: store, bulkMaxBytes: 512 << 20}
 }
+
+// SetBulkMaxBytes sets the request limit for story ZIP imports. It is separate
+// from the per-file media limit because a collection ZIP can contain many MP3s.
+func (s *Service) SetBulkMaxBytes(n int64) {
+	if n > 0 {
+		s.bulkMaxBytes = n
+	}
+}
+func (s *Service) BulkMaxBytes() int64 { return s.bulkMaxBytes }
 
 func (s *Service) ListCourses(ctx context.Context) ([]coursedomain.Course, error) {
 	return s.repo.ListAllCourses(ctx)
@@ -502,13 +521,17 @@ type MediaCue struct {
 
 // ImportMediaInput is a one-shot film/podcast publish.
 type ImportMediaInput struct {
-	Kind       string
-	Title      string
-	Language   string
-	CEFR       string
-	URL        string
-	Cover      string
-	Transcript []MediaCue
+	Kind        string
+	Title       string
+	Language    string
+	CEFR        string
+	URL         string
+	Cover       string
+	Transcript  []MediaCue
+	SourceID    string
+	SourceURL   string
+	Attribution json.RawMessage
+	License     json.RawMessage
 }
 
 // ImportMedia publishes a standalone film/podcast straight into the learner
@@ -534,12 +557,19 @@ func (s *Service) ImportMedia(ctx context.Context, in ImportMediaInput) (*course
 		lang = "en"
 	}
 	payload, err := json.Marshal(map[string]any{
-		"title":      strings.TrimSpace(in.Title),
-		"language":   lang,
-		"level":      strings.TrimSpace(in.CEFR),
-		"url":        strings.TrimSpace(in.URL),
-		"cover":      strings.TrimSpace(in.Cover),
-		"transcript": in.Transcript,
+		"title":       strings.TrimSpace(in.Title),
+		"language":    lang,
+		"level":       strings.TrimSpace(in.CEFR),
+		"url":         strings.TrimSpace(in.URL),
+		"cover":       strings.TrimSpace(in.Cover),
+		"transcript":  in.Transcript,
+		"source_id":   strings.TrimSpace(in.SourceID),
+		"source_url":  strings.TrimSpace(in.SourceURL),
+		"attribution": rawOrNil(in.Attribution),
+		"license":     rawOrNil(in.License),
+		// The existing single-item composer is an explicit publish action. Bulk
+		// ZIP imports use ImportStoryArchive and are always staged as drafts.
+		"published": true,
 	})
 	if err != nil {
 		return nil, err
@@ -565,18 +595,138 @@ func (s *Service) UpdateMedia(ctx context.Context, itemID string, in ImportMedia
 	if lang == "" {
 		lang = "en"
 	}
-	payload, err := json.Marshal(map[string]any{
-		"title":      strings.TrimSpace(in.Title),
-		"language":   lang,
-		"level":      strings.TrimSpace(in.CEFR),
-		"url":        strings.TrimSpace(in.URL),
-		"cover":      strings.TrimSpace(in.Cover),
-		"transcript": in.Transcript,
-	})
+	existing, err := s.findMediaItem(ctx, itemID)
+	if err != nil {
+		return nil, err
+	}
+	payloadMap := map[string]any{}
+	_ = json.Unmarshal(existing.Payload, &payloadMap)
+	payloadMap["title"] = strings.TrimSpace(in.Title)
+	payloadMap["language"] = lang
+	payloadMap["level"] = strings.TrimSpace(in.CEFR)
+	payloadMap["url"] = strings.TrimSpace(in.URL)
+	payloadMap["cover"] = strings.TrimSpace(in.Cover)
+	payloadMap["transcript"] = in.Transcript
+	if strings.TrimSpace(in.SourceID) != "" {
+		payloadMap["source_id"] = strings.TrimSpace(in.SourceID)
+	}
+	if strings.TrimSpace(in.SourceURL) != "" {
+		payloadMap["source_url"] = strings.TrimSpace(in.SourceURL)
+	}
+	if len(in.Attribution) > 0 {
+		payloadMap["attribution"] = rawOrNil(in.Attribution)
+	}
+	if len(in.License) > 0 {
+		payloadMap["license"] = rawOrNil(in.License)
+	}
+	payload, err := json.Marshal(payloadMap)
 	if err != nil {
 		return nil, err
 	}
 	return s.UpdateItem(ctx, itemID, payload, nil)
+}
+
+func (s *Service) findMediaItem(ctx context.Context, itemID string) (*coursedomain.LessonItem, error) {
+	courses, err := s.repo.ListAllCourses(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range courses {
+		if c.Title != MediaBucketTitle {
+			continue
+		}
+		units, err := s.repo.Units(ctx, c.ID)
+		if err != nil {
+			return nil, err
+		}
+		for _, u := range units {
+			lessons, err := s.repo.LessonsByUnit(ctx, u.ID)
+			if err != nil {
+				return nil, err
+			}
+			for _, l := range lessons {
+				items, err := s.repo.Items(ctx, l.ID)
+				if err != nil {
+					return nil, err
+				}
+				for i := range items {
+					if items[i].ID == itemID {
+						return &items[i], nil
+					}
+				}
+			}
+		}
+	}
+	return nil, coursedomain.ErrItemNotFound
+}
+
+// AdminMedia lists both staged drafts and published media from the existing
+// hidden media bucket. Learner media queries deliberately exclude drafts.
+func (s *Service) AdminMedia(ctx context.Context, kind string) ([]coursedomain.LessonItem, error) {
+	bySource, err := existingStories(ctx, s)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]coursedomain.LessonItem, 0, len(bySource))
+	for _, it := range bySource {
+		if kind == "" || it.Kind == kind {
+			items = append(items, it)
+		}
+	}
+	// Non-story media does not have source IDs, so collect it separately.
+	courses, err := s.repo.ListAllCourses(ctx)
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	for _, it := range items {
+		seen[it.ID] = true
+	}
+	for _, c := range courses {
+		if c.Title == MediaBucketTitle {
+			units, e := s.repo.Units(ctx, c.ID)
+			if e != nil {
+				return nil, e
+			}
+			for _, u := range units {
+				lessons, e := s.repo.LessonsByUnit(ctx, u.ID)
+				if e != nil {
+					return nil, e
+				}
+				for _, l := range lessons {
+					all, e := s.repo.Items(ctx, l.ID)
+					if e != nil {
+						return nil, e
+					}
+					for _, it := range all {
+						if !seen[it.ID] && (kind == "" || it.Kind == kind) && (it.Kind == coursedomain.KindStory || it.Kind == coursedomain.KindPodcast || it.Kind == coursedomain.KindVideo) {
+							items = append(items, it)
+							seen[it.ID] = true
+						}
+					}
+				}
+			}
+		}
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].Position < items[j].Position })
+	return items, nil
+}
+
+func (s *Service) SetMediaPublished(ctx context.Context, itemID string, published bool) (*coursedomain.LessonItem, error) {
+	it, err := s.findMediaItem(ctx, itemID)
+	if err != nil {
+		return nil, err
+	}
+	payload := map[string]any{}
+	if json.Unmarshal(it.Payload, &payload) != nil {
+		return nil, apperr.ErrInternal
+	}
+	payload["published"] = published
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	return s.UpdateItem(ctx, itemID, body, it.MediaKey)
 }
 
 // ensureMediaLesson finds (or lazily creates) the hidden media bucket and

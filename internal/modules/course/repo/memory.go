@@ -27,6 +27,7 @@ type MemoryCourseRepo struct {
 	lessonCourse map[string]string                    // lessonID -> courseID
 	accessRules  map[string]domain.AccessRule         // "type|id" -> rule
 	translations map[string]domain.ContentTranslation // "hash|locale" -> translation
+	imports      []domain.ImportSource
 }
 
 func raw(s string) json.RawMessage { return json.RawMessage(s) }
@@ -597,11 +598,16 @@ func (r *MemoryCourseRepo) MediaItems(_ context.Context, kind, language string, 
 				continue
 			}
 			var p struct {
-				Language   string            `json:"language"`
-				Transcript []json.RawMessage `json:"transcript"`
+				Language           string            `json:"language"`
+				Transcript         []json.RawMessage `json:"transcript"`
+				Published          *bool             `json:"published"`
+				CollectionPosition int               `json:"collection_position"`
 			}
 			_ = json.Unmarshal(it.Payload, &p)
 			if len(p.Transcript) == 0 {
+				continue
+			}
+			if p.Published != nil && !*p.Published {
 				continue
 			}
 			if language != "" && p.Language != language {
@@ -610,7 +616,33 @@ func (r *MemoryCourseRepo) MediaItems(_ context.Context, kind, language string, 
 			all = append(all, it)
 		}
 	}
-	sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
+	sort.SliceStable(all, func(i, j int) bool {
+		var a, b struct {
+			Position int    `json:"collection_position"`
+			Part     int    `json:"part_number"`
+			Series   string `json:"series_id"`
+			Title    string `json:"title"`
+		}
+		_ = json.Unmarshal(all[i].Payload, &a)
+		_ = json.Unmarshal(all[j].Payload, &b)
+		ak, bk := a.Series, b.Series
+		if ak == "" {
+			ak = a.Title
+		}
+		if bk == "" {
+			bk = b.Title
+		}
+		if ak != bk {
+			return ak < bk
+		}
+		if a.Part != b.Part {
+			return a.Part < b.Part
+		}
+		if a.Position != b.Position {
+			return a.Position < b.Position
+		}
+		return all[i].ID < all[j].ID
+	})
 	total := len(all)
 	if offset > total {
 		offset = total

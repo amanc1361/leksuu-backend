@@ -44,7 +44,10 @@ func (h *Handler) Mount(mux *http.ServeMux, prefix string, guard Guard) {
 	mux.Handle("GET "+prefix+"/admin/courses/{id}/translations", admin(h.CourseTranslations))
 	mux.Handle("PUT "+prefix+"/admin/translations", admin(h.SaveTranslations))
 	mux.Handle("POST "+prefix+"/admin/media", admin(h.ImportMedia))
+	mux.Handle("GET "+prefix+"/admin/media", admin(h.ListMedia))
 	mux.Handle("PATCH "+prefix+"/admin/media/{id}", admin(h.UpdateMedia))
+	mux.Handle("PATCH "+prefix+"/admin/media/{id}/publication", admin(h.SetMediaPublication))
+	mux.Handle("POST "+prefix+"/admin/stories/import", admin(h.ImportStoryArchive))
 	mux.Handle("GET "+prefix+"/admin/lesson-templates", admin(h.ListTemplates))
 	mux.Handle("GET "+prefix+"/admin/lessons/{id}/context", admin(h.LessonContext))
 	// vocabulary bank
