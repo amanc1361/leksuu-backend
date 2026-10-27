@@ -1,0 +1,1 @@
+model,lesson_id,exercise_type,locale,meaning_0_5,naturalness_0_5,educational_validity_0_5,terminology_0_5,script_0_5,technical_validation,actual_input_tokens,actual_output_tokens,actual_reasoning_tokens,elapsed_seconds,actual_cost_usd,native_reviewer,issues

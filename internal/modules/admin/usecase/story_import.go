@@ -295,7 +295,7 @@ func parseStoryArchive(data []byte) ([]StoryImportItem, map[string]*zip.File, er
 			itemPath = "items/" + ref.SourceID + ".json"
 		}
 		itemPath, ok := zipName(itemPath)
-		preview := StoryImportItem{SourceID: strings.TrimSpace(ref.SourceID), Position: idx + 1, Translations: map[string]int{}, Action: "create"}
+		preview := StoryImportItem{SourceID: strings.TrimSpace(ref.SourceID), Position: idx + 1, Translations: map[string]int{}, Issues: []StoryImportIssue{}, Action: "create"}
 		if !ok || files[itemPath] == nil {
 			preview.Issues = append(preview.Issues, issue("error", "item_missing", "Story metadata file is missing."))
 			items = append(items, preview)

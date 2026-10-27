@@ -1,0 +1,39 @@
+name: leksuu-localization
+services:
+  mcp:
+    image: ${LOCALIZATION_IMAGE:-leksuu-localization:0.1.5}
+    build: .
+    restart: unless-stopped
+    env_file: ${LOCALIZATION_ENV_FILE:-/opt/platform/secrets/localization.env}
+    # MCP never needs the OpenAI key. Controller uses its own secure environment.
+    environment:
+      OPENAI_API_KEY: ""
+    networks: [platform]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 512m
+    cpus: 1
+    healthcheck:
+      test: [CMD, /app/.venv/bin/python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+  controller:
+    image: ${LOCALIZATION_IMAGE:-leksuu-localization:0.1.5}
+    build: .
+    profiles: [control]
+    env_file: ${LOCALIZATION_CONTROL_ENV_FILE:-/opt/platform/secrets/localization-control.env}
+    environment:
+      TIKTOKEN_CACHE_DIR: /state/tokenizer
+    volumes: [state:/state]
+    networks: [platform]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    command: [l10n, --help]
+networks:
+  platform:
+    external: true
+volumes:
+  state:

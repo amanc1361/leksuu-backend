@@ -1,0 +1,2 @@
+# The localization service has its own Docker build context and runtime.
+services/localization-agent/

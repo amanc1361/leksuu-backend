@@ -1,0 +1,10 @@
+# Reuse the deployed, locked dependency image; no provider keys in image layers.
+ARG LOCALIZATION_BASE_IMAGE=leksuu-localization:0.1.5
+FROM ${LOCALIZATION_BASE_IMAGE}
+USER root
+COPY src /app/src
+COPY config /app/config
+RUN chmod -R a+rX /app/src /app/config && mkdir -p /state/providers && chmod 700 /state/providers && chown -R 10001:10001 /state
+ENV PYTHONPATH=/app/src
+USER 10001
+CMD ["uvicorn", "localizer.admin_server:app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--no-access-log", "--log-level", "critical"]

@@ -194,11 +194,13 @@ func New(cfg config.Config) (*App, error) {
 	})
 
 	adminModule := admin.New(admin.Deps{
-		Repo:         repos.authoring,
-		Vocab:        repos.srs,
-		Guard:        authModule.Authenticator(),
-		Store:        mediaStore,
-		BulkMaxBytes: 512 << 20,
+		Repo:              repos.authoring,
+		Vocab:             repos.srs,
+		Guard:             authModule.Authenticator(),
+		LocalizationURL:   cfg.LocalizationURL,
+		LocalizationToken: cfg.LocalizationToken,
+		Store:             mediaStore,
+		BulkMaxBytes:      512 << 20,
 	})
 
 	courseModule := course.New(course.Deps{

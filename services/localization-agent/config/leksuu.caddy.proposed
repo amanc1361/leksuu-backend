@@ -1,0 +1,20 @@
+# Proposed replacement for /opt/platform/edge/conf.d/leksuu.caddy.
+# Review and caddy validate before installation. Existing app routes retained.
+leksuu.ir, www.leksuu.ir {
+  encode zstd gzip
+
+  handle_path /localization/* {
+    request_body {
+      max_size 256KB
+    }
+    reverse_proxy leksuu-localization-mcp-1:8000
+  }
+
+  @api path /api/v1/*
+  reverse_proxy @api api:8080
+
+  @media path /media/*
+  reverse_proxy @media api:8080
+
+  reverse_proxy frontend:3000
+}

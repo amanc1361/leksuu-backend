@@ -24,6 +24,8 @@ type Config struct {
 	AIBaseURL          string
 	AIModel            string
 	AIAPIKey           string
+	LocalizationURL    string
+	LocalizationToken  string
 	AIDisableThinking  bool
 	PaymentProvider    string
 	ZarinpalMerchantID string
@@ -86,6 +88,8 @@ func Load() Config {
 		AIBaseURL:              env("AI_BASE_URL", ""),
 		AIModel:                env("AI_MODEL", ""),
 		AIAPIKey:               env("AI_API_KEY", ""),
+		LocalizationURL:        env("LOCALIZATION_ADMIN_URL", ""),
+		LocalizationToken:      env("LOCALIZATION_ADMIN_TOKEN", ""),
 		AIDisableThinking:      env("AI_DISABLE_THINKING", "true") != "false",
 		PaymentProvider:        env("PAYMENT_PROVIDER", "stub"),
 		ZarinpalMerchantID:     env("ZARINPAL_MERCHANT_ID", ""),
