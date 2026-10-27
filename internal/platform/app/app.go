@@ -199,6 +199,8 @@ func New(cfg config.Config) (*App, error) {
 		Guard:             authModule.Authenticator(),
 		LocalizationURL:   cfg.LocalizationURL,
 		LocalizationToken: cfg.LocalizationToken,
+		Store:             mediaStore,
+		BulkMaxBytes:      512 << 20,
 	})
 
 	courseModule := course.New(course.Deps{

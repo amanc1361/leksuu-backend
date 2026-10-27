@@ -4,6 +4,7 @@ package rest
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"strconv"
 
@@ -542,13 +543,17 @@ func (h *Handler) AccessRules(w http.ResponseWriter, r *http.Request) {
 // in one request — no course/unit/lesson navigation. POST /admin/media.
 func (h *Handler) ImportMedia(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Kind       string             `json:"kind"`
-		Title      string             `json:"title"`
-		Language   string             `json:"language"`
-		CEFR       string             `json:"cefr"`
-		URL        string             `json:"url"`
-		Cover      string             `json:"cover"`
-		Transcript []usecase.MediaCue `json:"transcript"`
+		Kind        string             `json:"kind"`
+		Title       string             `json:"title"`
+		Language    string             `json:"language"`
+		CEFR        string             `json:"cefr"`
+		URL         string             `json:"url"`
+		Cover       string             `json:"cover"`
+		Transcript  []usecase.MediaCue `json:"transcript"`
+		SourceID    string             `json:"source_id"`
+		SourceURL   string             `json:"source_url"`
+		Attribution json.RawMessage    `json:"attribution"`
+		License     json.RawMessage    `json:"license"`
 	}
 	if json.NewDecoder(r.Body).Decode(&in) != nil {
 		web.Error(w, r, apperr.ErrBadRequest)
@@ -556,6 +561,7 @@ func (h *Handler) ImportMedia(w http.ResponseWriter, r *http.Request) {
 	}
 	it, err := h.svc.ImportMedia(r.Context(), usecase.ImportMediaInput{
 		Kind: in.Kind, Title: in.Title, Language: in.Language, CEFR: in.CEFR, URL: in.URL, Cover: in.Cover, Transcript: in.Transcript,
+		SourceID: in.SourceID, SourceURL: in.SourceURL, Attribution: in.Attribution, License: in.License,
 	})
 	if err != nil {
 		web.Error(w, r, err)
@@ -568,12 +574,16 @@ func (h *Handler) ImportMedia(w http.ResponseWriter, r *http.Request) {
 // PATCH /admin/media/{id}.
 func (h *Handler) UpdateMedia(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Title      string             `json:"title"`
-		Language   string             `json:"language"`
-		CEFR       string             `json:"cefr"`
-		URL        string             `json:"url"`
-		Cover      string             `json:"cover"`
-		Transcript []usecase.MediaCue `json:"transcript"`
+		Title       string             `json:"title"`
+		Language    string             `json:"language"`
+		CEFR        string             `json:"cefr"`
+		URL         string             `json:"url"`
+		Cover       string             `json:"cover"`
+		Transcript  []usecase.MediaCue `json:"transcript"`
+		SourceID    string             `json:"source_id"`
+		SourceURL   string             `json:"source_url"`
+		Attribution json.RawMessage    `json:"attribution"`
+		License     json.RawMessage    `json:"license"`
 	}
 	if json.NewDecoder(r.Body).Decode(&in) != nil {
 		web.Error(w, r, apperr.ErrBadRequest)
@@ -581,12 +591,76 @@ func (h *Handler) UpdateMedia(w http.ResponseWriter, r *http.Request) {
 	}
 	it, err := h.svc.UpdateMedia(r.Context(), r.PathValue("id"), usecase.ImportMediaInput{
 		Title: in.Title, Language: in.Language, CEFR: in.CEFR, URL: in.URL, Cover: in.Cover, Transcript: in.Transcript,
+		SourceID: in.SourceID, SourceURL: in.SourceURL, Attribution: in.Attribution, License: in.License,
 	})
 	if err != nil {
 		web.Error(w, r, err)
 		return
 	}
 	web.JSON(w, http.StatusOK, map[string]any{"id": it.ID})
+}
+
+// ImportStoryArchive validates or stages a ZIP of multilingual stories. The
+// same endpoint powers preview (dry_run=true) and commit; created stories are
+// always drafts and therefore absent from the learner media library.
+func (h *Handler) ImportStoryArchive(w http.ResponseWriter, r *http.Request) {
+	max := h.svc.BulkMaxBytes()
+	r.Body = http.MaxBytesReader(w, r.Body, max+(2<<20))
+	if err := r.ParseMultipartForm(16 << 20); err != nil {
+		web.Error(w, r, apperr.ErrBadRequest)
+		return
+	}
+	file, _, err := r.FormFile("archive")
+	if err != nil {
+		web.Error(w, r, apperr.ErrBadRequest)
+		return
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, max+1))
+	if err != nil || int64(len(data)) > max {
+		web.Error(w, r, apperr.ErrBadRequest)
+		return
+	}
+	dryRun := r.FormValue("dry_run") != "false"
+	report, err := h.svc.ImportStoryArchive(r.Context(), data, dryRun)
+	if err != nil {
+		web.Error(w, r, err)
+		return
+	}
+	status := http.StatusOK
+	if !dryRun && report.Created > 0 {
+		status = http.StatusCreated
+	}
+	web.JSON(w, status, report)
+}
+
+func (h *Handler) ListMedia(w http.ResponseWriter, r *http.Request) {
+	items, err := h.svc.AdminMedia(r.Context(), r.URL.Query().Get("type"))
+	if err != nil {
+		web.Error(w, r, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(items))
+	for _, it := range items {
+		out = append(out, map[string]any{"id": it.ID, "kind": it.Kind, "lesson_id": it.LessonID, "payload": it.Payload, "media_key": it.MediaKey})
+	}
+	web.JSON(w, http.StatusOK, map[string]any{"items": out, "total": len(out)})
+}
+
+func (h *Handler) SetMediaPublication(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Published bool `json:"published"`
+	}
+	if json.NewDecoder(r.Body).Decode(&in) != nil {
+		web.Error(w, r, apperr.ErrBadRequest)
+		return
+	}
+	it, err := h.svc.SetMediaPublished(r.Context(), r.PathValue("id"), in.Published)
+	if err != nil {
+		web.Error(w, r, err)
+		return
+	}
+	web.JSON(w, http.StatusOK, map[string]any{"id": it.ID, "published": in.Published})
 }
 
 // lessonKind exposes a lesson's kind ("lesson" or "checkpoint").

@@ -7,6 +7,7 @@ import (
 
 	"github.com/leksuu/platform/internal/modules/admin/rest"
 	"github.com/leksuu/platform/internal/modules/admin/usecase"
+	mediadomain "github.com/leksuu/platform/internal/modules/media/domain"
 )
 
 type Deps struct {
@@ -15,6 +16,8 @@ type Deps struct {
 	Guard             rest.Guard
 	LocalizationURL   string
 	LocalizationToken string
+	Store             mediadomain.Store
+	BulkMaxBytes      int64
 }
 
 type Module struct {
@@ -25,7 +28,9 @@ type Module struct {
 }
 
 func New(d Deps) *Module {
-	return &Module{handler: rest.NewHandler(usecase.NewService(d.Repo, d.Vocab)), guard: d.Guard, localizationURL: d.LocalizationURL, localizationToken: d.LocalizationToken}
+	svc := usecase.NewService(d.Repo, d.Vocab, d.Store)
+	svc.SetBulkMaxBytes(d.BulkMaxBytes)
+	return &Module{handler: rest.NewHandler(svc), guard: d.Guard, localizationURL: d.LocalizationURL, localizationToken: d.LocalizationToken}
 }
 
 func (m *Module) Mount(mux *http.ServeMux, prefix string) {

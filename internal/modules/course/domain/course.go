@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"github.com/leksuu/platform/internal/shared/apperr"
 	"strings"
+	"time"
 )
 
 // CEFR levels and item/exercise kinds mirror the database CHECK constraints, so
@@ -142,6 +143,21 @@ type ImportedItemsResult struct {
 	Updated   int
 	Unchanged int
 	Removed   int
+}
+
+// ImportSource records an immutable source document used by an admin import.
+// Keeping the original checksum and metadata makes imports auditable without
+// mixing source provenance into the learner-facing course hierarchy.
+type ImportSource struct {
+	ID           string          `json:"id"`
+	FileName     string          `json:"file_name"`
+	StorageKey   string          `json:"storage_key"`
+	URL          string          `json:"url"`
+	ContentType  string          `json:"content_type"`
+	ContentBytes int             `json:"content_bytes"`
+	SHA256       string          `json:"sha256"`
+	Metadata     json.RawMessage `json:"metadata"`
+	CreatedAt    time.Time       `json:"created_at"`
 }
 
 // ContentTranslation is a translation of one imported source string (a grammar

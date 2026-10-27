@@ -379,14 +379,19 @@ func (r *PostgresCourseRepo) MediaItems(ctx context.Context, kind, language stri
 	if limit <= 0 {
 		limit = 50
 	}
-	const where = `kind IN ('podcast','video','story') AND payload ? 'transcript' AND ($1='' OR kind=$1) AND ($2='' OR payload->>'language'=$2)`
+	const where = `kind IN ('podcast','video','story') AND payload ? 'transcript'
+		AND COALESCE((payload->>'published')::boolean, true)
+		AND ($1='' OR kind=$1) AND ($2='' OR payload->>'language'=$2)`
 	var total int
 	if err := r.pool.QueryRow(ctx, `SELECT count(*) FROM lesson_items WHERE `+where, kind, language).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 	rows, err := r.pool.Query(ctx,
 		`SELECT id, lesson_id, position, kind, ref_id, payload, media_key FROM lesson_items WHERE `+where+
-			` ORDER BY payload->>'title' NULLS LAST, id LIMIT $3 OFFSET $4`, kind, language, limit, offset)
+			` ORDER BY COALESCE(NULLIF(payload->>'series_id',''), payload->>'title') NULLS LAST,
+			CASE WHEN payload->>'part_number' ~ '^[0-9]+$' THEN (payload->>'part_number')::int ELSE 0 END,
+			CASE WHEN payload->>'collection_position' ~ '^[0-9]+$' THEN (payload->>'collection_position')::int ELSE position END,
+			id LIMIT $3 OFFSET $4`, kind, language, limit, offset)
 	if err != nil {
 		return nil, 0, err
 	}
