@@ -36,6 +36,21 @@ func TestStoryArchiveDryRunStageDuplicateAndPublication(t *testing.T) {
 	if preview.Valid != 1 || preview.Created != 0 || len(store.objects) != 0 {
 		t.Fatalf("dry-run mutated state: %+v objects=%d", preview, len(store.objects))
 	}
+	encoded, err := json.Marshal(preview)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response struct {
+		Items []struct {
+			Issues json.RawMessage `json:"issues"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(encoded, &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Items) != 1 || string(response.Items[0].Issues) != "[]" {
+		t.Fatalf("warning-free preview must encode issues as an array: %s", encoded)
+	}
 
 	staged, err := svc.ImportStoryArchive(ctx, archive, false)
 	if err != nil {
