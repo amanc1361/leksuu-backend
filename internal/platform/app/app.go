@@ -210,6 +210,11 @@ func New(cfg config.Config) (*App, error) {
 		Premium:  billingModule.Service(),
 		Guard:    authModule.Authenticator(), // protected routes reuse auth middleware
 		Clock:    time.Now,
+		TargetLanguage: func(ctx context.Context, userID string) (string, error) {
+			profile, err := authModule.Service().Profile(ctx, userID)
+			if err != nil { return "", err }
+			return profile.TargetLang, nil
+		},
 	})
 	// A learner's target language must be one the admin has enabled.
 	authModule.Service().SetTargetLangCheck(courseModule.Service().LanguageEnabled)

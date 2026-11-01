@@ -379,19 +379,20 @@ func (r *PostgresCourseRepo) MediaItems(ctx context.Context, kind, language stri
 	if limit <= 0 {
 		limit = 50
 	}
-	const where = `kind IN ('podcast','video','story') AND payload ? 'transcript'
-		AND COALESCE((payload->>'published')::boolean, true)
-		AND ($1='' OR kind=$1) AND ($2='' OR payload->>'language'=$2)`
+	const where = `li.kind IN ('podcast','video','story') AND li.payload ? 'transcript'
+		AND COALESCE((li.payload->>'published')::boolean, true) AND c.published
+		AND ($1='' OR li.kind=$1) AND li.payload->>'language'=$2 AND c.language=$2`
+	const from = ` FROM lesson_items li JOIN lessons l ON l.id=li.lesson_id JOIN courses c ON c.id=l.course_id WHERE `
 	var total int
-	if err := r.pool.QueryRow(ctx, `SELECT count(*) FROM lesson_items WHERE `+where, kind, language).Scan(&total); err != nil {
+	if err := r.pool.QueryRow(ctx, `SELECT count(*)`+from+where, kind, language).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 	rows, err := r.pool.Query(ctx,
-		`SELECT id, lesson_id, position, kind, ref_id, payload, media_key FROM lesson_items WHERE `+where+
-			` ORDER BY COALESCE(NULLIF(payload->>'series_id',''), payload->>'title') NULLS LAST,
-			CASE WHEN payload->>'part_number' ~ '^[0-9]+$' THEN (payload->>'part_number')::int ELSE 0 END,
-			CASE WHEN payload->>'collection_position' ~ '^[0-9]+$' THEN (payload->>'collection_position')::int ELSE position END,
-			id LIMIT $3 OFFSET $4`, kind, language, limit, offset)
+		`SELECT li.id, li.lesson_id, li.position, li.kind, li.ref_id, li.payload, li.media_key`+from+where+
+			` ORDER BY COALESCE(NULLIF(li.payload->>'series_id',''), li.payload->>'title') NULLS LAST,
+			CASE WHEN li.payload->>'part_number' ~ '^[0-9]+$' THEN (li.payload->>'part_number')::int ELSE 0 END,
+			CASE WHEN li.payload->>'collection_position' ~ '^[0-9]+$' THEN (li.payload->>'collection_position')::int ELSE li.position END,
+			li.id LIMIT $3 OFFSET $4`, kind, language, limit, offset)
 	if err != nil {
 		return nil, 0, err
 	}

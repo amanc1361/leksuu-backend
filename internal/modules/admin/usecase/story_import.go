@@ -73,7 +73,10 @@ type storyArchiveItem struct {
 	SourceID         string                     `json:"source_id"`
 	SourceURL        string                     `json:"source_url"`
 	SourceArticleURL string                     `json:"source_article_url"`
-	Collection       string                     `json:"collection"`
+	Collection            string          `json:"collection"`
+	CollectionName        string          `json:"collection_name"`
+	CollectionDescription string          `json:"collection_description"`
+	CollectionCover       string          `json:"collection_cover"`
 	Genre            json.RawMessage            `json:"genre"`
 	Audience         string                     `json:"audience"`
 	License          json.RawMessage            `json:"license"`
@@ -570,6 +573,7 @@ func (s *Service) ImportStoryArchive(ctx context.Context, data []byte, dryRun bo
 			"cover": p.item.Cover, "url": url, "transcript": p.item.Transcript,
 			"source_id": p.item.SourceID, "source_url": firstNonEmpty(p.item.SourceURL, p.item.SourceArticleURL),
 			"source_audio_url": p.item.SourceAudioURL, "collection": p.item.Collection,
+			"collection_name": p.item.CollectionName, "collection_description": p.item.CollectionDescription, "collection_cover": p.item.CollectionCover,
 			"audience": p.item.Audience, "genre": rawOrNil(p.item.Genre), "license": rawOrNil(p.item.License),
 			"attribution": rawOrNil(p.item.Attribution), "review": rawOrNil(p.item.Review),
 			"series_id": series, "part_number": p.item.PartNumber, "part_total": p.item.PartTotal,

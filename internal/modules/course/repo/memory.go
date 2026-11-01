@@ -594,6 +594,17 @@ func (r *MemoryCourseRepo) MediaItems(_ context.Context, kind, language string, 
 			if it.Kind != "podcast" && it.Kind != "video" && it.Kind != "story" {
 				continue
 			}
+			courseID := r.lessonCourse[it.LessonID]
+			publishedCourse := false
+			for _, course := range r.courses {
+				if course.ID == courseID && course.Published && course.Language == language {
+					publishedCourse = true
+					break
+				}
+			}
+			if !publishedCourse {
+				continue
+			}
 			if kind != "" && it.Kind != kind {
 				continue
 			}
@@ -610,7 +621,7 @@ func (r *MemoryCourseRepo) MediaItems(_ context.Context, kind, language string, 
 			if p.Published != nil && !*p.Published {
 				continue
 			}
-			if language != "" && p.Language != language {
+			if p.Language != language {
 				continue
 			}
 			all = append(all, it)

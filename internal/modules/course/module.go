@@ -5,6 +5,7 @@
 package course
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -14,12 +15,13 @@ import (
 )
 
 type Deps struct {
-	Courses  domain.CourseRepository
-	Progress domain.ProgressRepository
-	Rewarder usecase.Rewarder
-	Premium  rest.Premium
-	Guard    rest.Guard
-	Clock    func() time.Time
+	Courses        domain.CourseRepository
+	Progress       domain.ProgressRepository
+	Rewarder       usecase.Rewarder
+	Premium        rest.Premium
+	Guard          rest.Guard
+	Clock          func() time.Time
+	TargetLanguage func(context.Context, string) (string, error)
 }
 
 type Module struct {
@@ -32,7 +34,7 @@ func New(d Deps) *Module {
 	svc := usecase.NewService(d.Courses, d.Progress, d.Rewarder, d.Clock)
 	return &Module{
 		svc:     svc,
-		handler: rest.NewHandler(svc, d.Premium),
+		handler: rest.NewHandler(svc, d.Premium, d.TargetLanguage),
 		guard:   d.Guard,
 	}
 }
