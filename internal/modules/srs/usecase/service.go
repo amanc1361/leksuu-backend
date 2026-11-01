@@ -268,11 +268,20 @@ func (s *Service) ListVocab(ctx context.Context, language, q string, limit, offs
 }
 
 func (s *Service) Lookup(ctx context.Context, language, lemma string) (*domain.Vocab, error) {
-	key := domain.NormalizeLemma(lemma)
-	if language == "" || key == "" {
+	keys := domain.LookupLemmas(language, lemma)
+	if language == "" || len(keys) == 0 {
 		return nil, domain.ErrVocabNotFound
 	}
-	return s.repo.LookupVocab(ctx, language, key)
+	for _, key := range keys {
+		v, err := s.repo.LookupVocab(ctx, language, key)
+		if err == nil {
+			return v, nil
+		}
+		if err != domain.ErrVocabNotFound {
+			return nil, err
+		}
+	}
+	return nil, domain.ErrVocabNotFound
 }
 
 // Undo restores the card's schedule to what it was before the last review

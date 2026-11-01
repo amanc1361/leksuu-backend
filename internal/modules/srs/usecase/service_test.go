@@ -266,6 +266,43 @@ func TestLookupNormalizesCaseAndPunctuation(t *testing.T) {
 	}
 }
 
+func TestLookupUsesExistingEnglishInflectionsAndLearnerMeanings(t *testing.T) {
+	r := repo.NewMemorySRSRepo()
+	svc := NewService(r, nil, func() time.Time { return schedClock })
+	ctx := context.Background()
+	_ = r.EnsureVocab(ctx, &domain.Vocab{
+		Language: "en", Kind: "word", Lemma: "and",
+		Meaning: map[string]string{"ckb": "و", "fa": "و"},
+	})
+	_ = r.EnsureVocab(ctx, &domain.Vocab{
+		Language: "en", Kind: "word", Lemma: "celebrate",
+		Meaning:       map[string]string{"ckb": "جەژن گێڕان", "fa": "جشن گرفتن"},
+		Pronunciation: "/ˈselɪbreɪt/",
+	})
+
+	common, err := svc.Lookup(ctx, "en", "And,")
+	if err != nil || common.Meaning["ckb"] == "" || common.Meaning["fa"] == "" {
+		t.Fatalf("common English word should expose both learner meanings: v=%+v err=%v", common, err)
+	}
+	inflected, err := svc.Lookup(ctx, "en", "Celebrated")
+	if err != nil || inflected.Lemma != "celebrate" || inflected.Pronunciation == "" {
+		t.Fatalf("inflected lookup should resolve an existing base entry: v=%+v err=%v", inflected, err)
+	}
+}
+
+func TestLookupDoesNotInventMissingWordsOrProperNouns(t *testing.T) {
+	r := repo.NewMemorySRSRepo()
+	svc := NewService(r, nil, func() time.Time { return schedClock })
+	ctx := context.Background()
+	_ = r.EnsureVocab(ctx, &domain.Vocab{Language: "en", Kind: "word", Lemma: "simple", Meaning: map[string]string{"ckb": "سادە"}})
+
+	for _, word := range []string{"unlisted", "Simon"} {
+		if v, err := svc.Lookup(ctx, "en", word); err != domain.ErrVocabNotFound || v != nil {
+			t.Fatalf("%q must remain a real not-found result: v=%+v err=%v", word, v, err)
+		}
+	}
+}
+
 // QA N03: a lesson card saved with blank translations borrows the dictionary
 // meaning, and blank values never erase an existing meaning.
 func TestAddCardKeepsAndBorrowsMeaning(t *testing.T) {

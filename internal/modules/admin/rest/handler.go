@@ -12,6 +12,7 @@ import (
 	coursedomain "github.com/leksuu/platform/internal/modules/course/domain"
 	srsdomain "github.com/leksuu/platform/internal/modules/srs/domain"
 	"github.com/leksuu/platform/internal/shared/apperr"
+	"github.com/leksuu/platform/internal/shared/authn"
 	"github.com/leksuu/platform/internal/shared/web"
 )
 
@@ -483,6 +484,28 @@ func (h *Handler) CreateVocab(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	web.JSON(w, http.StatusCreated, vocabView(*v))
+}
+
+func (h *Handler) ImportVocabulary(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		DryRun bool                          `json:"dry_run"`
+		Items  []usecase.VocabularyImportRow `json:"items"`
+	}
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<20)).Decode(&in) != nil {
+		web.Error(w, r, apperr.ErrBadRequest)
+		return
+	}
+	principal, ok := authn.FromContext(r.Context())
+	if !ok {
+		web.Error(w, r, apperr.ErrBadRequest)
+		return
+	}
+	report, err := h.svc.ImportVocabulary(r.Context(), principal.Subject, in.DryRun, in.Items)
+	if err != nil {
+		web.Error(w, r, err)
+		return
+	}
+	web.JSON(w, http.StatusOK, report)
 }
 
 func (h *Handler) UpdateVocab(w http.ResponseWriter, r *http.Request) {

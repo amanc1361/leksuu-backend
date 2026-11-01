@@ -60,6 +60,7 @@ type Repository interface {
 // satisfied structurally by the SRS repository.
 type VocabStore interface {
 	ListVocab(ctx context.Context, language, q string, limit, offset int) ([]srsdomain.Vocab, int, error)
+	LookupVocab(ctx context.Context, language, lemma string) (*srsdomain.Vocab, error)
 	GetVocab(ctx context.Context, id string) (*srsdomain.Vocab, error)
 	EnsureVocab(ctx context.Context, v *srsdomain.Vocab) error
 	UpdateVocab(ctx context.Context, v *srsdomain.Vocab) error

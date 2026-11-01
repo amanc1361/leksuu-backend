@@ -388,3 +388,67 @@ func NormalizeLemma(s string) string {
 	s = strings.TrimRight(s, ".!?,;:؟،\"”… \t\r\n")
 	return strings.Join(strings.Fields(s), " ")
 }
+
+// LookupLemmas returns database keys worth trying for a tapped token. The
+// exact normalized form is always first. English gets a small, deterministic
+// set of spelling-based inflection candidates; a candidate is useful only when
+// it already exists in the vocabulary bank, so this never invents a meaning.
+func LookupLemmas(language, lemma string) []string {
+	exact := NormalizeLemma(lemma)
+	if exact == "" {
+		return nil
+	}
+	out := []string{exact}
+	if strings.ToLower(strings.TrimSpace(language)) != "en" || strings.Contains(exact, " ") {
+		return out
+	}
+	seen := map[string]bool{exact: true}
+	add := func(candidate string) {
+		candidate = NormalizeLemma(candidate)
+		if len([]rune(candidate)) < 2 || seen[candidate] {
+			return
+		}
+		seen[candidate] = true
+		out = append(out, candidate)
+	}
+	trimDoubleConsonant := func(stem string) {
+		r := []rune(stem)
+		if len(r) > 2 && r[len(r)-1] == r[len(r)-2] && !strings.ContainsRune("aeiou", r[len(r)-1]) {
+			add(string(r[:len(r)-1]))
+		}
+	}
+
+	if strings.HasSuffix(exact, "'s") {
+		add(strings.TrimSuffix(exact, "'s"))
+	}
+	if strings.HasSuffix(exact, "ies") && len(exact) > 3 {
+		add(strings.TrimSuffix(exact, "ies") + "y")
+	}
+	if strings.HasSuffix(exact, "ves") && len(exact) > 3 {
+		stem := strings.TrimSuffix(exact, "ves")
+		add(stem + "f")
+		add(stem + "fe")
+	}
+	if strings.HasSuffix(exact, "es") && len(exact) > 3 {
+		add(strings.TrimSuffix(exact, "es"))
+	}
+	if strings.HasSuffix(exact, "s") && !strings.HasSuffix(exact, "ss") && len(exact) > 2 {
+		add(strings.TrimSuffix(exact, "s"))
+	}
+	if strings.HasSuffix(exact, "ied") && len(exact) > 3 {
+		add(strings.TrimSuffix(exact, "ied") + "y")
+	}
+	if strings.HasSuffix(exact, "ed") && len(exact) > 3 {
+		stem := strings.TrimSuffix(exact, "ed")
+		add(strings.TrimSuffix(exact, "d")) // celebrated -> celebrate
+		add(stem)                           // walked -> walk
+		trimDoubleConsonant(stem)           // stopped -> stop
+	}
+	if strings.HasSuffix(exact, "ing") && len(exact) > 4 {
+		stem := strings.TrimSuffix(exact, "ing")
+		add(stem)                 // walking -> walk
+		add(stem + "e")           // making -> make
+		trimDoubleConsonant(stem) // running -> run
+	}
+	return out
+}

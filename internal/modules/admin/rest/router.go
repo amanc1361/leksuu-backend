@@ -53,6 +53,7 @@ func (h *Handler) Mount(mux *http.ServeMux, prefix string, guard Guard) {
 	// vocabulary bank
 	mux.Handle("GET "+prefix+"/admin/vocab", admin(h.ListVocab))
 	mux.Handle("POST "+prefix+"/admin/vocab", admin(h.CreateVocab))
+	mux.Handle("POST "+prefix+"/admin/vocab/import", admin(h.ImportVocabulary))
 	mux.Handle("PATCH "+prefix+"/admin/vocab/{id}", admin(h.UpdateVocab))
 	mux.Handle("DELETE "+prefix+"/admin/vocab/{id}", admin(h.DeleteVocab))
 }
