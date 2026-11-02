@@ -380,8 +380,9 @@ func (r *PostgresCourseRepo) MediaItems(ctx context.Context, kind, language stri
 		limit = 50
 	}
 	const where = `li.kind IN ('podcast','video','story') AND li.payload ? 'transcript'
-		AND COALESCE((li.payload->>'published')::boolean, true) AND c.published
-		AND ($1='' OR li.kind=$1) AND li.payload->>'language'=$2 AND c.language=$2`
+		AND COALESCE((li.payload->>'published')::boolean, true)
+		AND (c.title='__media_library__' OR (c.published AND c.language=$2))
+		AND ($1='' OR li.kind=$1) AND li.payload->>'language'=$2`
 	const from = ` FROM lesson_items li JOIN lessons l ON l.id=li.lesson_id JOIN courses c ON c.id=l.course_id WHERE `
 	var total int
 	if err := r.pool.QueryRow(ctx, `SELECT count(*)`+from+where, kind, language).Scan(&total); err != nil {

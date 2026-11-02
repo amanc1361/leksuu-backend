@@ -597,7 +597,7 @@ func (r *MemoryCourseRepo) MediaItems(_ context.Context, kind, language string, 
 			courseID := r.lessonCourse[it.LessonID]
 			publishedCourse := false
 			for _, course := range r.courses {
-				if course.ID == courseID && course.Published && course.Language == language {
+				if course.ID == courseID && (course.Title == "__media_library__" || (course.Published && course.Language == language)) {
 					publishedCourse = true
 					break
 				}
