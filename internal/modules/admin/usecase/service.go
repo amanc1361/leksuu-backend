@@ -6,6 +6,7 @@ package usecase
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"regexp"
 	"sort"
 	"strings"
@@ -32,6 +33,7 @@ type Repository interface {
 	Lessons(ctx context.Context, courseID string) ([]coursedomain.Lesson, error)
 	CreateItem(ctx context.Context, it *coursedomain.LessonItem) error
 	UpdateItem(ctx context.Context, it *coursedomain.LessonItem) error
+	UpdateItemPayloadIfUnchanged(ctx context.Context, itemID string, expected, replacement json.RawMessage) (bool, error)
 	CreateExercise(ctx context.Context, e *coursedomain.Exercise) error
 	Items(ctx context.Context, lessonID string) ([]coursedomain.LessonItem, error)
 	DeleteItem(ctx context.Context, itemID string) error
@@ -68,10 +70,12 @@ type VocabStore interface {
 }
 
 type Service struct {
-	repo         Repository
-	vocab        VocabStore
-	store        mediadomain.Store
-	bulkMaxBytes int64
+	repo             Repository
+	vocab            VocabStore
+	store            mediadomain.Store
+	mediaJobs        MediaJobStore
+	timingExceptions TimingExceptionStore
+	bulkMaxBytes     int64
 }
 
 func NewService(repo Repository, vocab VocabStore, stores ...mediadomain.Store) *Service {
@@ -375,6 +379,28 @@ func (s *Service) UpdateItem(ctx context.Context, itemID string, payload json.Ra
 	if itemID == "" {
 		return nil, apperr.ErrBadRequest
 	}
+	if current, err := s.findMediaItem(ctx, itemID); err == nil {
+		var original struct {
+			SourceID string `json:"source_id"`
+		}
+		_ = json.Unmarshal(current.Payload, &original)
+		if original.SourceID != "" {
+			if err := guardImportedMutation(current.Payload, payload); err != nil {
+				return nil, err
+			}
+			updated, err := s.repo.UpdateItemPayloadIfUnchanged(ctx, itemID, current.Payload, payload)
+			if err != nil {
+				return nil, err
+			}
+			if !updated {
+				return nil, ErrMediaJobConflict
+			}
+			current.Payload = payload
+			return current, nil
+		}
+	} else if !errors.Is(err, coursedomain.ErrItemNotFound) {
+		return nil, err
+	}
 	it := &coursedomain.LessonItem{ID: itemID, Payload: payload, MediaKey: mediaKey}
 	if err := s.repo.UpdateItem(ctx, it); err != nil {
 		return nil, err
@@ -508,19 +534,20 @@ func (s *Service) AccessRules(ctx context.Context) ([]coursedomain.AccessRule, e
 // MediaBucketTitle marks the hidden system course that hosts standalone media
 // library items (films/podcasts) so admins never navigate the course tree to
 // publish one. It stays unpublished, so it never appears in the learner catalogue.
-const MediaBucketTitle = "__media_library__"
+const MediaBucketTitle = coursedomain.MediaBucketTitle
 
 // MediaCue is one transcript line. Start/End are optional: untimed lines are
 // valid for podcasts, and films can be timed later in the lesson editor.
 // Translation maps a UI locale ("fa"/"ckb") to the line's translation.
 type MediaCue struct {
-	Start       *float64          `json:"start,omitempty"`
-	End         *float64          `json:"end,omitempty"`
-	Text        string            `json:"text"`
-	Translation map[string]string `json:"translation,omitempty"`
+	Start        *float64          `json:"start,omitempty"`
+	End          *float64          `json:"end,omitempty"`
+	Text         string            `json:"text"`
+	Translation  map[string]string `json:"translation,omitempty"`
+	TimingStatus string            `json:"timing_status,omitempty"`
 }
 
-// ImportMediaInput is a one-shot film/podcast publish.
+// ImportMediaInput stages standalone media as a draft.
 type ImportMediaInput struct {
 	Kind        string
 	Title       string
@@ -535,8 +562,7 @@ type ImportMediaInput struct {
 	License     json.RawMessage
 }
 
-// ImportMedia publishes a standalone film/podcast straight into the learner
-// media library, creating the hidden system bucket on first use. No course-tree
+// ImportMedia stages standalone media in the hidden system bucket. No course-tree
 // navigation needed; the item reuses the LessonItem machinery (transcript,
 // shadowing, clip-replay) so nothing downstream changes.
 func (s *Service) ImportMedia(ctx context.Context, in ImportMediaInput) (*coursedomain.LessonItem, error) {
@@ -545,7 +571,7 @@ func (s *Service) ImportMedia(ctx context.Context, in ImportMediaInput) (*course
 		return nil, apperr.ErrBadRequest
 	}
 	// Stories are text-first graded readers: no media URL required.
-	if strings.TrimSpace(in.Title) == "" || len(in.Transcript) == 0 ||
+	if strings.TrimSpace(in.Title) == "" || (len(in.Transcript) == 0 && strings.TrimSpace(in.URL) == "") ||
 		(kind != coursedomain.KindStory && strings.TrimSpace(in.URL) == "") {
 		return nil, apperr.ErrBadRequest
 	}
@@ -568,15 +594,15 @@ func (s *Service) ImportMedia(ctx context.Context, in ImportMediaInput) (*course
 		"source_url":  strings.TrimSpace(in.SourceURL),
 		"attribution": rawOrNil(in.Attribution),
 		"license":     rawOrNil(in.License),
-		// The existing single-item composer is an explicit publish action. Bulk
-		// ZIP imports use ImportStoryArchive and are always staged as drafts.
-		"published": true,
+		"published":   false,
 	})
 	if err != nil {
 		return nil, err
 	}
-	existing, _ := s.repo.Items(ctx, lessonID)
-	return s.AddItem(ctx, lessonID, kind, payload, len(existing), "")
+	// Position zero asks the repository to append after the highest existing
+	// position. Counting rows collides when a prior item was deleted or when
+	// positions begin at one, as they do in PostgreSQL.
+	return s.AddItem(ctx, lessonID, kind, payload, 0, "")
 }
 
 // UpdateMedia rewrites an existing media item's payload (title, language, level,
@@ -589,7 +615,7 @@ func (s *Service) UpdateMedia(ctx context.Context, itemID string, in ImportMedia
 	// URL is optional here: stories have none, and kind can't change in this
 	// editor. Per-kind strictness (video/podcast must have a URL) is enforced
 	// at creation and mirrored in the importer UI; this endpoint is admin-only.
-	if strings.TrimSpace(in.Title) == "" || len(in.Transcript) == 0 {
+	if strings.TrimSpace(in.Title) == "" || (len(in.Transcript) == 0 && strings.TrimSpace(in.URL) == "") {
 		return nil, apperr.ErrBadRequest
 	}
 	lang := strings.TrimSpace(in.Language)
@@ -602,12 +628,62 @@ func (s *Service) UpdateMedia(ctx context.Context, itemID string, in ImportMedia
 	}
 	payloadMap := map[string]any{}
 	_ = json.Unmarshal(existing.Payload, &payloadMap)
+	// Imported source text, audio and accepted timing are immutable through the
+	// general editor. Purpose-built CAS endpoints handle timing/translation.
+	if sourceID, _ := payloadMap["source_id"].(string); sourceID != "" {
+		if sha, _ := payloadMap["audio_sha256"].(string); sha != "" {
+			oldURL, _ := payloadMap["url"].(string)
+			oldCues, _ := payloadMap["transcript"].([]any)
+			if oldURL != strings.TrimSpace(in.URL) || len(oldCues) != len(in.Transcript) {
+				return nil, ErrStoryTimingConflict
+			}
+			for i, raw := range oldCues {
+				old, ok := raw.(map[string]any)
+				if !ok || old["text"] != in.Transcript[i].Text {
+					return nil, ErrStoryTimingConflict
+				}
+				start, hasStart := old["start"].(float64)
+				end, hasEnd := old["end"].(float64)
+				if hasStart != hasEnd || (hasStart && (in.Transcript[i].Start == nil || in.Transcript[i].End == nil || *in.Transcript[i].Start != start || *in.Transcript[i].End != end)) {
+					return nil, ErrStoryTimingConflict
+				}
+				if !hasStart && (in.Transcript[i].Start != nil || in.Transcript[i].End != nil) {
+					return nil, ErrStoryTimingConflict
+				}
+				statuses, _ := payloadMap["translation_status"].(map[string]any)
+				for _, lang := range []string{"fa", "ckb"} {
+					if statuses[lang] == "approved" || statuses[lang] == "human_approved" {
+						oldTranslations, _ := old["translation"].(map[string]any)
+						if value, _ := oldTranslations[lang].(string); value != in.Transcript[i].Translation[lang] {
+							return nil, ErrStoryTranslationConflict
+						}
+					}
+				}
+			}
+		}
+	}
 	payloadMap["title"] = strings.TrimSpace(in.Title)
 	payloadMap["language"] = lang
 	payloadMap["level"] = strings.TrimSpace(in.CEFR)
 	payloadMap["url"] = strings.TrimSpace(in.URL)
-	payloadMap["cover"] = strings.TrimSpace(in.Cover)
-	payloadMap["transcript"] = in.Transcript
+	newCover := strings.TrimSpace(in.Cover)
+	oldCover, _ := payloadMap["cover"].(string)
+	if newCover != oldCover {
+		if oldCover != "" {
+			versions, _ := payloadMap["cover_versions"].([]any)
+			payloadMap["cover_versions"] = append(versions, oldCover)
+		}
+		payloadMap["cover_source"] = "manual"
+		delete(payloadMap, "cover_key")
+		delete(payloadMap, "cover_asset")
+	}
+	payloadMap["cover"] = newCover
+	// An imported transcript carries timing, translation reviews and editorial
+	// history beyond the general editor's fields. Keep it intact here; targeted
+	// compare-and-swap endpoints own changes to those cues.
+	if sourceID, _ := payloadMap["source_id"].(string); sourceID == "" {
+		payloadMap["transcript"] = in.Transcript
+	}
 	if strings.TrimSpace(in.SourceID) != "" {
 		payloadMap["source_id"] = strings.TrimSpace(in.SourceID)
 	}
@@ -624,7 +700,14 @@ func (s *Service) UpdateMedia(ctx context.Context, itemID string, in ImportMedia
 	if err != nil {
 		return nil, err
 	}
-	return s.UpdateItem(ctx, itemID, payload, nil)
+	updated, err := s.repo.UpdateItemPayloadIfUnchanged(ctx, itemID, existing.Payload, payload)
+	if err != nil {
+		return nil, err
+	}
+	if !updated {
+		return nil, ErrMediaJobConflict
+	}
+	return &coursedomain.LessonItem{ID: itemID, Kind: existing.Kind, LessonID: existing.LessonID, Payload: payload, MediaKey: existing.MediaKey}, nil
 }
 
 func (s *Service) findMediaItem(ctx context.Context, itemID string) (*coursedomain.LessonItem, error) {
@@ -727,7 +810,18 @@ func (s *Service) SetMediaPublished(ctx context.Context, itemID string, publishe
 	if err != nil {
 		return nil, err
 	}
-	return s.UpdateItem(ctx, itemID, body, it.MediaKey)
+	if err := guardPublication(it.Payload, body); err != nil {
+		return nil, err
+	}
+	updated, err := s.repo.UpdateItemPayloadIfUnchanged(ctx, itemID, it.Payload, body)
+	if err != nil {
+		return nil, err
+	}
+	if !updated {
+		return nil, ErrMediaJobConflict
+	}
+	it.Payload = body
+	return it, nil
 }
 
 // ensureMediaLesson finds (or lazily creates) the hidden media bucket and

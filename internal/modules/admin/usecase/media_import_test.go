@@ -26,13 +26,20 @@ func TestImportMediaCreatesLibraryItemInHiddenBucket(t *testing.T) {
 		t.Fatalf("kind=%s", it.Kind)
 	}
 
-	// It appears in the learner media library (transcript present, language matches).
+	// New uploads are drafts until an administrator explicitly publishes them.
 	items, total, err := repo.MediaItems(ctx, "podcast", "en", 50, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if total != 1 || len(items) != 1 {
-		t.Fatalf("library total=%d len=%d", total, len(items))
+	if total != 0 || len(items) != 0 {
+		t.Fatalf("draft leaked into library total=%d len=%d", total, len(items))
+	}
+	if _, err := svc.SetMediaPublished(ctx, it.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	items, total, err = repo.MediaItems(ctx, "podcast", "en", 50, 0)
+	if err != nil || total != 1 || len(items) != 1 {
+		t.Fatalf("published item missing: %v %d %d", err, total, len(items))
 	}
 	var p struct {
 		Title, Language, URL string
@@ -50,10 +57,14 @@ func TestImportMediaCreatesLibraryItemInHiddenBucket(t *testing.T) {
 	}
 
 	// A second import reuses the same hidden bucket (exactly one is ever created).
-	if _, err := svc.ImportMedia(ctx, ImportMediaInput{
+	second, err := svc.ImportMedia(ctx, ImportMediaInput{
 		Kind: "video", Title: "Film", URL: "https://cdn/f.mp4", Transcript: []MediaCue{{Text: "a"}},
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("second import: %v", err)
+	}
+	if second.Position <= it.Position {
+		t.Fatalf("second import must append: first position=%d second=%d", it.Position, second.Position)
 	}
 	all, _ := repo.ListAllCourses(ctx)
 	buckets := 0
@@ -103,7 +114,7 @@ func TestImportMediaRejectsBadInput(t *testing.T) {
 		{Kind: "text", Title: "x", URL: "u", Transcript: []MediaCue{{Text: "a"}}},   // bad kind
 		{Kind: "podcast", Title: "", URL: "u", Transcript: []MediaCue{{Text: "a"}}}, // no title
 		{Kind: "podcast", Title: "x", URL: "", Transcript: []MediaCue{{Text: "a"}}}, // no url
-		{Kind: "podcast", Title: "x", URL: "u", Transcript: nil},                    // no transcript
+		{Kind: "story", Title: "x", URL: "", Transcript: nil},                       // no audio or transcript
 	}
 	for i, c := range cases {
 		if _, err := svc.ImportMedia(ctx, c); err == nil {

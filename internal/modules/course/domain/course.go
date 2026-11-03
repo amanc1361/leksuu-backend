@@ -15,21 +15,22 @@ import (
 // CEFR levels and item/exercise kinds mirror the database CHECK constraints, so
 // the vocabulary lives in one place instead of as scattered string literals.
 const (
-	KindText      = "text"
-	KindImage     = "image"
-	KindAudio     = "audio"
-	KindVideo     = "video"
-	KindExercise  = "exercise"
-	KindSpeaking  = "speaking"
-	KindDialogue  = "dialogue"
-	KindMiniStory = "mini_story"
-	KindPOVStory  = "pov_story"
-	KindStory     = "story"
-	KindPodcast   = "podcast"
-	KindGrammar   = "grammar"
-	KindReading   = "reading"  // a longer text read before its comprehension questions
-	KindWriting   = "writing"  // open writing task checked by the AI writing coach
-	KindRoleplay  = "roleplay" // scenario conversation with the AI tutor
+	MediaBucketTitle = "__media_library__"
+	KindText         = "text"
+	KindImage        = "image"
+	KindAudio        = "audio"
+	KindVideo        = "video"
+	KindExercise     = "exercise"
+	KindSpeaking     = "speaking"
+	KindDialogue     = "dialogue"
+	KindMiniStory    = "mini_story"
+	KindPOVStory     = "pov_story"
+	KindStory        = "story"
+	KindPodcast      = "podcast"
+	KindGrammar      = "grammar"
+	KindReading      = "reading"  // a longer text read before its comprehension questions
+	KindWriting      = "writing"  // open writing task checked by the AI writing coach
+	KindRoleplay     = "roleplay" // scenario conversation with the AI tutor
 )
 
 // Course is a CEFR-leveled program in a target language.

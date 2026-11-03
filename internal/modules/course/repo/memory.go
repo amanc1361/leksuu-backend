@@ -5,6 +5,7 @@
 package repo
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"sort"
@@ -597,7 +598,7 @@ func (r *MemoryCourseRepo) MediaItems(_ context.Context, kind, language string, 
 			courseID := r.lessonCourse[it.LessonID]
 			publishedCourse := false
 			for _, course := range r.courses {
-				if course.ID == courseID && (course.Title == "__media_library__" || (course.Published && course.Language == language)) {
+				if course.ID == courseID && (course.Title == domain.MediaBucketTitle || (course.Published && course.Language == language)) {
 					publishedCourse = true
 					break
 				}
@@ -680,6 +681,23 @@ func (r *MemoryCourseRepo) UpdateItem(_ context.Context, it *domain.LessonItem) 
 		}
 	}
 	return domain.ErrItemNotFound
+}
+
+func (r *MemoryCourseRepo) UpdateItemPayloadIfUnchanged(_ context.Context, itemID string, expected, replacement json.RawMessage) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for lessonID, list := range r.items {
+		for i := range list {
+			if list[i].ID == itemID {
+				if !bytes.Equal(list[i].Payload, expected) {
+					return false, nil
+				}
+				r.items[lessonID][i].Payload = append(json.RawMessage(nil), replacement...)
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 func (r *MemoryCourseRepo) CreateItem(_ context.Context, it *domain.LessonItem) error {

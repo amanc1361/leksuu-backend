@@ -4,6 +4,7 @@ package repo
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 
 	"github.com/jackc/pgx/v5"
@@ -418,6 +419,17 @@ func (r *PostgresCourseRepo) UpdateItem(ctx context.Context, it *domain.LessonIt
 		return domain.ErrItemNotFound
 	}
 	return err
+}
+
+func (r *PostgresCourseRepo) UpdateItemPayloadIfUnchanged(ctx context.Context, itemID string, expected, replacement json.RawMessage) (bool, error) {
+	var id string
+	err := r.pool.QueryRow(ctx,
+		`UPDATE lesson_items SET payload=$3::jsonb WHERE id=$1 AND payload=$2::jsonb RETURNING id`,
+		itemID, []byte(expected), []byte(replacement)).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 func (r *PostgresCourseRepo) CreateItem(ctx context.Context, it *domain.LessonItem) error {

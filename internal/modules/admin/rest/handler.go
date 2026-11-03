@@ -4,9 +4,11 @@ package rest
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/leksuu/platform/internal/modules/admin/usecase"
 	coursedomain "github.com/leksuu/platform/internal/modules/course/domain"
@@ -16,9 +18,75 @@ import (
 	"github.com/leksuu/platform/internal/shared/web"
 )
 
-type Handler struct{ svc *usecase.Service }
+type Handler struct {
+	svc            *usecase.Service
+	coverGenerator *usecase.CoverGenerator
+}
 
-func NewHandler(svc *usecase.Service) *Handler { return &Handler{svc: svc} }
+func NewHandler(svc *usecase.Service, generator ...*usecase.CoverGenerator) *Handler {
+	h := &Handler{svc: svc}
+	if len(generator) > 0 {
+		h.coverGenerator = generator[0]
+	}
+	return h
+}
+
+func (h *Handler) GenerateStoryCover(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Direction string `json:"direction"`
+	}
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&in) != nil {
+		web.Error(w, r, apperr.ErrBadRequest)
+		return
+	}
+	preview, err := h.svc.GenerateStoryCover(r.Context(), r.PathValue("id"), in.Direction, h.coverGenerator)
+	if errors.Is(err, usecase.ErrCoverGeneratorUnavailable) {
+		web.JSON(w, http.StatusServiceUnavailable, map[string]string{"error": "cover generator is not configured"})
+		return
+	}
+	if errors.Is(err, usecase.ErrCoverGeneratorBusy) {
+		web.JSON(w, http.StatusTooManyRequests, map[string]string{"error": "cover generator is busy; retry shortly"})
+		return
+	}
+	if err != nil {
+		web.Error(w, r, err)
+		return
+	}
+	web.JSON(w, http.StatusCreated, preview)
+}
+
+func (h *Handler) ApproveStoryCover(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Key           string `json:"key"`
+		ExpectedCover string `json:"expected_cover"`
+	}
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&in) != nil {
+		web.Error(w, r, apperr.ErrBadRequest)
+		return
+	}
+	url, err := h.svc.ApproveStoryCover(r.Context(), r.PathValue("id"), in.Key, in.ExpectedCover)
+	if err != nil {
+		web.Error(w, r, err)
+		return
+	}
+	web.JSON(w, http.StatusOK, map[string]string{"cover": url})
+}
+
+func (h *Handler) RestoreStoryCover(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		ExpectedCover string `json:"expected_cover"`
+	}
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&in) != nil {
+		web.Error(w, r, apperr.ErrBadRequest)
+		return
+	}
+	url, err := h.svc.RestorePreviousStoryCover(r.Context(), r.PathValue("id"), in.ExpectedCover)
+	if err != nil {
+		web.Error(w, r, err)
+		return
+	}
+	web.JSON(w, http.StatusOK, map[string]string{"cover": url})
+}
 
 func courseView(c coursedomain.Course) map[string]any {
 	return map[string]any{
@@ -562,7 +630,7 @@ func (h *Handler) AccessRules(w http.ResponseWriter, r *http.Request) {
 	web.JSON(w, http.StatusOK, map[string]any{"rules": rules})
 }
 
-// ImportMedia publishes a standalone film/podcast into the learner media library
+// ImportMedia stages standalone media and queues draft synchronization when possible.
 // in one request — no course/unit/lesson navigation. POST /admin/media.
 func (h *Handler) ImportMedia(w http.ResponseWriter, r *http.Request) {
 	var in struct {
@@ -590,7 +658,17 @@ func (h *Handler) ImportMedia(w http.ResponseWriter, r *http.Request) {
 		web.Error(w, r, err)
 		return
 	}
-	web.JSON(w, http.StatusCreated, map[string]any{"id": it.ID, "kind": it.Kind, "lesson_id": it.LessonID})
+	response := map[string]any{"id": it.ID, "kind": it.Kind, "lesson_id": it.LessonID}
+	if strings.TrimSpace(in.URL) != "" {
+		job, queueErr := h.svc.EnqueueMediaJob(r.Context(), it.ID)
+		if queueErr != nil {
+			response["processing_status"] = "queue_failed"
+		} else {
+			response["processing_status"] = "queued"
+			response["processing_job_id"] = job.ID
+		}
+	}
+	web.JSON(w, http.StatusCreated, response)
 }
 
 // UpdateMedia rewrites a media item's payload from the standalone editor.
@@ -684,6 +762,70 @@ func (h *Handler) SetMediaPublication(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	web.JSON(w, http.StatusOK, map[string]any{"id": it.ID, "published": in.Published})
+}
+
+func (h *Handler) BulkStories(w http.ResponseWriter, r *http.Request) {
+	var in usecase.StoryBulkInput
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<10))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&in) != nil {
+		web.Error(w, r, apperr.ErrBadRequest)
+		return
+	}
+	result, err := h.svc.BulkStories(r.Context(), in)
+	if err != nil {
+		web.Error(w, r, err)
+		return
+	}
+	web.JSON(w, http.StatusOK, result)
+}
+
+func (h *Handler) BackfillStoryTiming(w http.ResponseWriter, r *http.Request) {
+	var in usecase.StoryTimingInput
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 512<<10))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&in) != nil {
+		web.Error(w, r, apperr.ErrBadRequest)
+		return
+	}
+	result, err := h.svc.BackfillStoryTiming(r.Context(), r.PathValue("sourceID"), in)
+	if err != nil {
+		web.Error(w, r, err)
+		return
+	}
+	web.JSON(w, http.StatusOK, result)
+}
+
+func (h *Handler) BackfillStoryTranslations(w http.ResponseWriter, r *http.Request) {
+	var in usecase.StoryTranslationInput
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<20))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&in) != nil {
+		web.Error(w, r, apperr.ErrBadRequest)
+		return
+	}
+	result, err := h.svc.BackfillStoryTranslations(r.Context(), r.PathValue("sourceID"), in)
+	if err != nil {
+		web.Error(w, r, err)
+		return
+	}
+	web.JSON(w, http.StatusOK, result)
+}
+
+func (h *Handler) ReviseStoryTiming(w http.ResponseWriter, r *http.Request) {
+	var in usecase.StoryTimingRevisionInput
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&in) != nil {
+		web.Error(w, r, apperr.ErrBadRequest)
+		return
+	}
+	result, err := h.svc.ReviseStoryTiming(r.Context(), r.PathValue("sourceID"), in)
+	if err != nil {
+		web.Error(w, r, err)
+		return
+	}
+	web.JSON(w, http.StatusOK, result)
 }
 
 // lessonKind exposes a lesson's kind ("lesson" or "checkpoint").

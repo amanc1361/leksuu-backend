@@ -24,6 +24,8 @@ type Config struct {
 	AIBaseURL          string
 	AIModel            string
 	AIAPIKey           string
+	CoverImageAPIKey   string
+	CoverImageModel    string
 	LocalizationURL    string
 	LocalizationToken  string
 	AIDisableThinking  bool
@@ -88,6 +90,8 @@ func Load() Config {
 		AIBaseURL:              env("AI_BASE_URL", ""),
 		AIModel:                env("AI_MODEL", ""),
 		AIAPIKey:               env("AI_API_KEY", ""),
+		CoverImageAPIKey:       env("COVER_IMAGE_API_KEY", ""),
+		CoverImageModel:        env("COVER_IMAGE_MODEL", "gpt-image-2.5-flare"),
 		LocalizationURL:        env("LOCALIZATION_ADMIN_URL", ""),
 		LocalizationToken:      env("LOCALIZATION_ADMIN_TOKEN", ""),
 		AIDisableThinking:      env("AI_DISABLE_THINKING", "true") != "false",
