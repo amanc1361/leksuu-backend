@@ -48,7 +48,8 @@ def words(text):
 
 
 def db():
-    return psycopg.connect(os.environ["MEDIA_JOBS_DATABASE_URL"], row_factory=dict_row)
+    database_url = os.environ.get("MEDIA_JOBS_DATABASE_URL") or os.environ["DATABASE_URL"]
+    return psycopg.connect(database_url, row_factory=dict_row)
 
 
 def event(connection, job_id, name, **details):

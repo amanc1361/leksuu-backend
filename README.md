@@ -167,6 +167,8 @@ volume keeps downloaded Whisper models between restarts. Set
 `MEDIA_JOBS_MAX_BYTES` to cap an individual upload (default 2 GiB). This worker
 uses local CPU inference and does not call a paid alignment API. Cover approval
 and translation approval remain separate Admin decisions.
+The worker accepts the standard production `DATABASE_URL`; an explicit
+`MEDIA_JOBS_DATABASE_URL` overrides it when the queue uses a separate database.
 The worker image uses Python 3.11 with PyAV 18.1. If the default image registry
 or Python package index is unavailable, set `PYTHON_BASE` or `PIP_INDEX_URL`
 for the Compose build. A cached Whisper model loads locally without a network
