@@ -29,6 +29,7 @@ type repositories struct {
 	progress      coursedomain.ProgressRepository
 	gamification  gamedomain.Repository
 	authoring     adminusecase.Repository
+	mediaJobs     adminusecase.MediaJobStore
 	srs           srsdomain.Repository
 	dict          dictdomain.Repository
 	shadowing     shadowdomain.Repository

@@ -5,6 +5,7 @@
 package repo
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"sort"
@@ -594,6 +595,17 @@ func (r *MemoryCourseRepo) MediaItems(_ context.Context, kind, language string, 
 			if it.Kind != "podcast" && it.Kind != "video" && it.Kind != "story" {
 				continue
 			}
+			courseID := r.lessonCourse[it.LessonID]
+			publishedCourse := false
+			for _, course := range r.courses {
+				if course.ID == courseID && (course.Title == domain.MediaBucketTitle || (course.Published && course.Language == language)) {
+					publishedCourse = true
+					break
+				}
+			}
+			if !publishedCourse {
+				continue
+			}
 			if kind != "" && it.Kind != kind {
 				continue
 			}
@@ -610,7 +622,7 @@ func (r *MemoryCourseRepo) MediaItems(_ context.Context, kind, language string, 
 			if p.Published != nil && !*p.Published {
 				continue
 			}
-			if language != "" && p.Language != language {
+			if p.Language != language {
 				continue
 			}
 			all = append(all, it)
@@ -669,6 +681,23 @@ func (r *MemoryCourseRepo) UpdateItem(_ context.Context, it *domain.LessonItem) 
 		}
 	}
 	return domain.ErrItemNotFound
+}
+
+func (r *MemoryCourseRepo) UpdateItemPayloadIfUnchanged(_ context.Context, itemID string, expected, replacement json.RawMessage) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for lessonID, list := range r.items {
+		for i := range list {
+			if list[i].ID == itemID {
+				if !bytes.Equal(list[i].Payload, expected) {
+					return false, nil
+				}
+				r.items[lessonID][i].Payload = append(json.RawMessage(nil), replacement...)
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 func (r *MemoryCourseRepo) CreateItem(_ context.Context, it *domain.LessonItem) error {

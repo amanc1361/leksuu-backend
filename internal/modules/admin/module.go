@@ -18,6 +18,8 @@ type Deps struct {
 	LocalizationToken string
 	Store             mediadomain.Store
 	BulkMaxBytes      int64
+	CoverGenerator    *usecase.CoverGenerator
+	MediaJobs         usecase.MediaJobStore
 }
 
 type Module struct {
@@ -30,7 +32,13 @@ type Module struct {
 func New(d Deps) *Module {
 	svc := usecase.NewService(d.Repo, d.Vocab, d.Store)
 	svc.SetBulkMaxBytes(d.BulkMaxBytes)
-	return &Module{handler: rest.NewHandler(svc), guard: d.Guard, localizationURL: d.LocalizationURL, localizationToken: d.LocalizationToken}
+	svc.SetMediaJobs(d.MediaJobs)
+	if store, ok := d.Repo.(usecase.TimingExceptionStore); ok {
+		svc.SetTimingExceptionStore(store)
+	} else {
+		svc.SetTimingExceptionStore(usecase.NewMemoryTimingExceptionStore())
+	}
+	return &Module{handler: rest.NewHandler(svc, d.CoverGenerator), guard: d.Guard, localizationURL: d.LocalizationURL, localizationToken: d.LocalizationToken}
 }
 
 func (m *Module) Mount(mux *http.ServeMux, prefix string) {

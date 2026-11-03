@@ -33,6 +33,7 @@ func TestImporterRoutesAreRegistered(t *testing.T) {
 		{"PUT", "/v1/admin/lessons/x/imported-items", `{"items":[]}`},
 		{"GET", "/v1/admin/courses/x/translations?locale=fa", ``},
 		{"PUT", "/v1/admin/translations", `{}`},
+		{"PUT", "/v1/admin/stories/test-story/timing", `{}`},
 	}
 	for _, rt := range routes {
 		rec := httptest.NewRecorder()

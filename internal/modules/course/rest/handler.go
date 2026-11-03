@@ -4,6 +4,7 @@
 package rest
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -19,12 +20,17 @@ import (
 )
 
 type Handler struct {
-	svc     *usecase.Service
-	premium Premium // optional; gates film/podcast (media library)
+	svc            *usecase.Service
+	premium        Premium // optional; gates film/podcast (media library)
+	targetLanguage func(context.Context, string) (string, error)
 }
 
-func NewHandler(svc *usecase.Service, premium Premium) *Handler {
-	return &Handler{svc: svc, premium: premium}
+func NewHandler(svc *usecase.Service, premium Premium, targetLanguage ...func(context.Context, string) (string, error)) *Handler {
+	h := &Handler{svc: svc, premium: premium}
+	if len(targetLanguage) > 0 {
+		h.targetLanguage = targetLanguage[0]
+	}
+	return h
 }
 
 // --- presenters (decide exactly what leaves the server) ---
@@ -239,7 +245,30 @@ func (h *Handler) MediaLibrary(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	items, total, err := h.svc.MediaLibrary(r.Context(), r.URL.Query().Get("type"), r.URL.Query().Get("lang"), mediaQInt(r, "limit", 50), mediaQInt(r, "offset", 0))
+	language := r.URL.Query().Get("lang")
+	if h.targetLanguage != nil {
+		principal, ok := authn.FromContext(r.Context())
+		if !ok {
+			web.Error(w, r, apperr.ErrInternal)
+			return
+		}
+		var err error
+		language, err = h.targetLanguage(r.Context(), principal.Subject)
+		if err != nil {
+			web.Error(w, r, err)
+			return
+		}
+	}
+	if language == "" {
+		web.Error(w, r, apperr.ErrBadRequest)
+		return
+	}
+	kind := r.URL.Query().Get("type")
+	if kind != domain.KindStory && kind != domain.KindPodcast && kind != domain.KindVideo {
+		web.Error(w, r, apperr.ErrBadRequest)
+		return
+	}
+	items, total, err := h.svc.MediaLibrary(r.Context(), kind, language, mediaQInt(r, "limit", 50), mediaQInt(r, "offset", 0))
 	if err != nil {
 		web.Error(w, r, err)
 		return
@@ -248,7 +277,7 @@ func (h *Handler) MediaLibrary(w http.ResponseWriter, r *http.Request) {
 	for _, it := range items {
 		out = append(out, map[string]any{"id": it.ID, "kind": it.Kind, "lesson_id": it.LessonID, "payload": it.Payload, "media_key": it.MediaKey})
 	}
-	web.JSON(w, http.StatusOK, map[string]any{"items": out, "total": total})
+	web.JSON(w, http.StatusOK, map[string]any{"items": out, "total": total, "language": language})
 }
 
 func (h *Handler) GetLesson(w http.ResponseWriter, r *http.Request) {

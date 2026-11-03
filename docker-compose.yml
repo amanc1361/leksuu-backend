@@ -88,6 +88,9 @@ services:
       # Default false: the bucket stays private and the API streams its bytes at
       # /media/<key>. Set true only for a bucket that allows anonymous reads.
       S3_PUBLIC_READ: "${S3_PUBLIC_READ:-false}"
+      COVER_IMAGE_API_KEY: "${COVER_IMAGE_API_KEY:-}"
+      COVER_IMAGE_MODEL: "${COVER_IMAGE_MODEL:-gpt-image-2.5-flare}"
+      MEDIA_TRANSLATION_TARGETS: "${MEDIA_TRANSLATION_TARGETS:-fa,ckb}"
     ports: ["${API_PORT:-8080}:8080"]
     volumes: ["mediadata:/data/media"]
     depends_on:
@@ -98,6 +101,36 @@ services:
       migrate:
         condition: service_completed_successfully
 
+  # Enable with: docker compose --profile media-processing up -d media-worker
+  # Each replica claims one durable PostgreSQL job at a time. Model files stay
+  # in a named volume across restarts; results remain drafts until Admin review.
+  media-worker:
+    profiles: ["media-processing"]
+    build:
+      context: .
+      dockerfile: Dockerfile.media-worker
+      args:
+        PYTHON_BASE: "${PYTHON_BASE:-python:3.11-slim-bookworm}"
+        PIP_INDEX_URL: "${PIP_INDEX_URL:-https://pypi.org/simple}"
+    environment:
+      MEDIA_JOBS_DATABASE_URL: postgres://postgres:postgres@db:5432/leksuu?sslmode=disable
+      MEDIA_JOBS_MEDIA_BASE_URL: http://api:8080
+      MEDIA_JOBS_PUBLIC_ORIGIN: "${MEDIA_PUBLIC_URL:-http://localhost:8080}"
+      MEDIA_JOBS_MODEL_DIR: /models
+      MEDIA_JOBS_MAX_BYTES: "${MEDIA_JOBS_MAX_BYTES:-2147483648}"
+      MEDIA_JOBS_TRANSLATION_MODEL_DIR: /models/madlad400-ct2
+      MEDIA_TRANSLATION_TARGETS: "${MEDIA_TRANSLATION_TARGETS:-fa,ckb}"
+    volumes: ["media-models:/models"]
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      api:
+        condition: service_started
+    restart: unless-stopped
+
 volumes:
   pgdata:
   mediadata:
+  media-models:

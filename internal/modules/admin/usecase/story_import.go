@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"path"
 	"regexp"
 	"sort"
@@ -34,6 +35,8 @@ type StoryImportItem struct {
 	Position     int                `json:"position"`
 	PartNumber   int                `json:"part_number,omitempty"`
 	Transcript   int                `json:"transcript_lines"`
+	TimedCues    int                `json:"timed_cues"`
+	HasCover     bool               `json:"has_cover"`
 	Translations map[string]int     `json:"translation_lines"`
 	AudioPath    string             `json:"audio_path,omitempty"`
 	AudioBytes   int64              `json:"audio_bytes,omitempty"`
@@ -65,24 +68,30 @@ type storyManifest struct {
 }
 
 type storyArchiveItem struct {
-	Kind             string                     `json:"kind"`
-	Title            string                     `json:"title"`
-	Language         string                     `json:"language"`
-	CEFR             string                     `json:"cefr"`
-	Cover            string                     `json:"cover"`
-	SourceID         string                     `json:"source_id"`
-	SourceURL        string                     `json:"source_url"`
-	SourceArticleURL string                     `json:"source_article_url"`
-	Collection       string                     `json:"collection"`
-	Genre            json.RawMessage            `json:"genre"`
-	Audience         string                     `json:"audience"`
-	License          json.RawMessage            `json:"license"`
-	Attribution      json.RawMessage            `json:"attribution"`
-	Transcript       []MediaCue                 `json:"transcript"`
-	TranscriptFile   string                     `json:"transcript_file"`
-	Translations     map[string]json.RawMessage `json:"translations"`
-	Audio            string                     `json:"audio"`
-	Files            struct {
+	Kind                  string                     `json:"kind"`
+	Title                 string                     `json:"title"`
+	Author                string                     `json:"author"`
+	Description           string                     `json:"description"`
+	Language              string                     `json:"language"`
+	CEFR                  string                     `json:"cefr"`
+	Cover                 string                     `json:"cover"`
+	SourceID              string                     `json:"source_id"`
+	SourceURL             string                     `json:"source_url"`
+	SourceArticleURL      string                     `json:"source_article_url"`
+	Collection            string                     `json:"collection"`
+	CollectionName        string                     `json:"collection_name"`
+	CollectionDescription string                     `json:"collection_description"`
+	CollectionCover       string                     `json:"collection_cover"`
+	SeriesCover           string                     `json:"series_cover"`
+	Genre                 json.RawMessage            `json:"genre"`
+	Audience              string                     `json:"audience"`
+	License               json.RawMessage            `json:"license"`
+	Attribution           json.RawMessage            `json:"attribution"`
+	Transcript            []MediaCue                 `json:"transcript"`
+	TranscriptFile        string                     `json:"transcript_file"`
+	Translations          map[string]json.RawMessage `json:"translations"`
+	Audio                 string                     `json:"audio"`
+	Files                 struct {
 		Full struct {
 			Path   string `json:"path"`
 			Bytes  int64  `json:"bytes"`
@@ -168,7 +177,18 @@ func subtitleLines(raw string) []string {
 	var out []string
 	for _, block := range blocks {
 		var text []string
-		for _, line := range strings.Split(strings.TrimSpace(block), "\n") {
+		lines := strings.Split(strings.TrimSpace(block), "\n")
+		if len(lines) > 0 && strings.HasPrefix(strings.TrimSpace(lines[0]), "NOTE") {
+			continue
+		}
+		start := 0
+		for i, line := range lines {
+			if strings.Contains(line, "-->") {
+				start = i + 1
+				break
+			}
+		}
+		for _, line := range lines[start:] {
 			line = strings.TrimSpace(line)
 			if line == "" || line == "WEBVTT" || regexp.MustCompile(`^\d+$`).MatchString(line) || strings.Contains(line, "-->") {
 				continue
@@ -183,6 +203,20 @@ func subtitleLines(raw string) []string {
 }
 
 func transcriptFromFile(raw string) []MediaCue {
+	// Subtitle files carry real cue boundaries. Keep them; a plain transcript
+	// still follows the older untimed path below.
+	if timed := timedSubtitleCues(raw); len(timed) > 0 {
+		return timed
+	}
+	if !strings.Contains(raw, "-->") {
+		var cues []MediaCue
+		for _, line := range strings.Split(strings.ReplaceAll(raw, "\r\n", "\n"), "\n") {
+			if line = strings.TrimSpace(line); line != "" && line != "WEBVTT" {
+				cues = append(cues, MediaCue{Text: line})
+			}
+		}
+		return cues
+	}
 	lines := subtitleLines(raw)
 	if len(lines) == 0 {
 		for _, line := range strings.Split(strings.ReplaceAll(raw, "\r\n", "\n"), "\n") {
@@ -194,6 +228,66 @@ func transcriptFromFile(raw string) []MediaCue {
 	out := make([]MediaCue, len(lines))
 	for i, line := range lines {
 		out[i] = MediaCue{Text: line}
+	}
+	return out
+}
+
+func subtitleTimingValid(raw string, cues []MediaCue) bool {
+	count := strings.Count(raw, "-->")
+	if count == 0 {
+		return true
+	}
+	if count != len(cues) {
+		return false
+	}
+	for _, cue := range cues {
+		if cue.Start == nil || cue.End == nil {
+			return false
+		}
+	}
+	return true
+}
+
+var subtitleTime = regexp.MustCompile(`^\s*(?:(\d{1,2}):)?([0-5]?\d):([0-5]\d)[,.](\d{1,3})\s*-->\s*(?:(\d{1,2}):)?([0-5]?\d):([0-5]\d)[,.](\d{1,3})(?:\s+(?:(?:align|position|line|size|vertical):\S+\s*)+)?$`)
+
+func subtitleSeconds(h, m, s, ms string) float64 {
+	hours, _ := strconv.Atoi(h)
+	minutes, _ := strconv.Atoi(m)
+	seconds, _ := strconv.Atoi(s)
+	millis, _ := strconv.Atoi(ms)
+	for len(ms) < 3 {
+		millis *= 10
+		ms += "0"
+	}
+	return float64(hours*3600+minutes*60+seconds) + float64(millis)/1000
+}
+
+func timedSubtitleCues(raw string) []MediaCue {
+	raw = strings.ReplaceAll(strings.TrimPrefix(raw, "\ufeff"), "\r\n", "\n")
+	var out []MediaCue
+	for _, block := range strings.Split(raw, "\n\n") {
+		var times []string
+		var text []string
+		lines := strings.Split(strings.TrimSpace(block), "\n")
+		timeLine := -1
+		for i, line := range lines {
+			line = strings.TrimSpace(line)
+			if match := subtitleTime.FindStringSubmatch(line); match != nil {
+				times = match[1:]
+				timeLine = i
+				break
+			}
+		}
+		for _, line := range lines[timeLine+1:] {
+			if line = strings.TrimSpace(line); line != "" {
+				text = append(text, line)
+			}
+		}
+		if len(times) == 8 && len(text) > 0 {
+			start := subtitleSeconds(times[0], times[1], times[2], times[3])
+			end := subtitleSeconds(times[4], times[5], times[6], times[7])
+			out = append(out, MediaCue{Start: &start, End: &end, Text: strings.Join(text, " ")})
+		}
 	}
 	return out
 }
@@ -322,6 +416,7 @@ func parseStoryArchive(data []byte) ([]StoryImportItem, map[string]*zip.File, er
 			item.SourceID = ref.SourceID
 		}
 		preview.SourceID, preview.Title, preview.item = strings.TrimSpace(item.SourceID), strings.TrimSpace(item.Title), item
+		preview.HasCover = strings.TrimSpace(item.Cover) != ""
 		if item.Position > 0 {
 			preview.Position = item.Position
 		}
@@ -359,6 +454,9 @@ func parseStoryArchive(data []byte) ([]StoryImportItem, map[string]*zip.File, er
 				preview.Issues = append(preview.Issues, issue("error", "transcript_file_missing", "The transcript file is missing."))
 			} else if b, e := readZipFile(files[name], 8<<20); e == nil {
 				item.Transcript = transcriptFromFile(string(b))
+				if !subtitleTimingValid(string(b), item.Transcript) {
+					preview.Issues = append(preview.Issues, issue("error", "timing_invalid", "Some subtitle cues have missing or invalid timing."))
+				}
 				preview.item.Transcript = item.Transcript
 			}
 		}
@@ -375,6 +473,23 @@ func parseStoryArchive(data []byte) ([]StoryImportItem, map[string]*zip.File, er
 		} else if len(item.Transcript) == 1 {
 			preview.Issues = append(preview.Issues, issue("error", "transcript_incomplete", "A one-line transcript is treated as incomplete."))
 		}
+		timed := 0
+		previousEnd := 0.0
+		for i, cue := range item.Transcript {
+			if cue.Start == nil && cue.End == nil {
+				continue
+			}
+			timed++
+			if cue.Start == nil || cue.End == nil || math.IsNaN(*cue.Start) || math.IsNaN(*cue.End) || math.IsInf(*cue.Start, 0) || math.IsInf(*cue.End, 0) || *cue.Start < 0 || *cue.End <= *cue.Start || (i > 0 && *cue.Start < previousEnd) {
+				preview.Issues = append(preview.Issues, issue("error", "timing_invalid", fmt.Sprintf("Transcript timing at line %d is invalid or overlaps the previous line.", i+1)))
+			} else {
+				previousEnd = *cue.End
+			}
+		}
+		if timed > 0 && timed != len(item.Transcript) {
+			preview.Issues = append(preview.Issues, issue("error", "timing_partial", "Every transcript line needs start and end timing when timing is supplied."))
+		}
+		preview.TimedCues = timed
 		for _, locale := range []string{"fa", "ckb"} {
 			if trRaw, exists := item.Translations[locale]; exists {
 				lines, e := decodeTranslation(trRaw, files)
@@ -566,11 +681,14 @@ func (s *Service) ImportStoryArchive(ctx context.Context, data []byte, dryRun bo
 			p.item.PartNumber = inferred
 		}
 		payload := map[string]any{
-			"title": p.item.Title, "language": p.item.Language, "level": p.item.CEFR,
+			"title": p.item.Title, "author": p.item.Author, "description": p.item.Description,
+			"language": p.item.Language, "level": p.item.CEFR,
 			"cover": p.item.Cover, "url": url, "transcript": p.item.Transcript,
 			"source_id": p.item.SourceID, "source_url": firstNonEmpty(p.item.SourceURL, p.item.SourceArticleURL),
 			"source_audio_url": p.item.SourceAudioURL, "collection": p.item.Collection,
-			"audience": p.item.Audience, "genre": rawOrNil(p.item.Genre), "license": rawOrNil(p.item.License),
+			"collection_name": p.item.CollectionName, "collection_description": p.item.CollectionDescription, "collection_cover": p.item.CollectionCover,
+			"series_cover": p.item.SeriesCover,
+			"audience":     p.item.Audience, "genre": rawOrNil(p.item.Genre), "license": rawOrNil(p.item.License),
 			"attribution": rawOrNil(p.item.Attribution), "review": rawOrNil(p.item.Review),
 			"series_id": series, "part_number": p.item.PartNumber, "part_total": p.item.PartTotal,
 			"collection_position": p.Position, "audio_sha256": audioSHA, "import_sha256": report.ArchiveSHA256,

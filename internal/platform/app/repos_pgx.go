@@ -40,6 +40,7 @@ func buildRepos(cfg config.Config) (repositories, func(), error) {
 		gamification:  gamerepo.NewPostgresRepo(pool),
 		placement:     placementrepo.NewPostgresRepo(pool),
 		authoring:     courses, // admin authoring uses the same Postgres content store
+		mediaJobs:     courserepo.NewPostgresMediaJobRepo(pool),
 		srs:           srsrepo.NewPostgresSRSRepo(pool),
 		dict:          dictrepo.NewPostgresDictRepo(pool),
 		shadowing:     shadowrepo.NewPostgresShadowRepo(pool),

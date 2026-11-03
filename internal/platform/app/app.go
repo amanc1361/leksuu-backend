@@ -16,6 +16,7 @@ import (
 	"time"
 
 	admin "github.com/leksuu/platform/internal/modules/admin"
+	adminusecase "github.com/leksuu/platform/internal/modules/admin/usecase"
 	ai "github.com/leksuu/platform/internal/modules/ai"
 	assignment "github.com/leksuu/platform/internal/modules/assignment"
 	auth "github.com/leksuu/platform/internal/modules/auth"
@@ -201,6 +202,8 @@ func New(cfg config.Config) (*App, error) {
 		LocalizationToken: cfg.LocalizationToken,
 		Store:             mediaStore,
 		BulkMaxBytes:      512 << 20,
+		CoverGenerator:    &adminusecase.CoverGenerator{APIKey: cfg.CoverImageAPIKey, Model: cfg.CoverImageModel},
+		MediaJobs:         repos.mediaJobs,
 	})
 
 	courseModule := course.New(course.Deps{
@@ -210,6 +213,13 @@ func New(cfg config.Config) (*App, error) {
 		Premium:  billingModule.Service(),
 		Guard:    authModule.Authenticator(), // protected routes reuse auth middleware
 		Clock:    time.Now,
+		TargetLanguage: func(ctx context.Context, userID string) (string, error) {
+			profile, err := authModule.Service().Profile(ctx, userID)
+			if err != nil {
+				return "", err
+			}
+			return profile.TargetLang, nil
+		},
 	})
 	// A learner's target language must be one the admin has enabled.
 	authModule.Service().SetTargetLangCheck(courseModule.Service().LanguageEnabled)

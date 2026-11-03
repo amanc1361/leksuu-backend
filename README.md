@@ -128,10 +128,49 @@ Storage is a port with two implementations, chosen at the composition root:
 - **Local disk** (default) — files written under `MEDIA_DIR`, served at
   `GET /media/{key}` with `Cache-Control: public, max-age=31536000, immutable`
   and HTTP range support (so video seeks). Good for dev / single node.
-- **S3-compatible** (ArvanCloud, MinIO, AWS) — build with `-tags s3`
-  (`go get github.com/minio/minio-go/v7` first), set `S3_*` env, and point
-  `MEDIA_PUBLIC_URL` at the bucket/CDN base. Delivery goes straight from the
-  bucket/CDN — no API fan-out.
+- **S3-compatible** (ArvanCloud, MinIO, AWS) — the production Docker image
+  includes the `s3` build tag. Set `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`,
+  `S3_PREFIX`, `S3_ACCESS_KEY`, `S3_SECRET_KEY` and `S3_SECURE`. With
+  `S3_PUBLIC_READ=false`, keep `MEDIA_PUBLIC_URL` at the site origin; the API
+  serves the private bucket at the existing `/media/{key}` URLs. Public bucket
+  delivery requires `S3_PUBLIC_READ=true` and a bucket/CDN base URL.
+
+Before switching an existing local installation to S3, run the read-only
+`go run -tags s3 ./cmd/media-migrate -manifest media-inventory.json` with the
+old `MEDIA_DIR` mounted and the destination S3 settings. Review the checksums
+and keys, then run with `-apply` to copy and verify. The tool refuses to
+overwrite a different object and never removes local files. Keep the private
+delivery mode and the same site origin to preserve existing database URLs.
+
+Admin story cover generation uses `COVER_IMAGE_API_KEY` and optional
+`COVER_IMAGE_MODEL` (default `gpt-image-2.5-flare`). The key stays server-side.
+The endpoint is admin-only and generated images require approval before the
+story payload changes.
+
+### Draft media synchronization jobs
+
+Migration `0057_media_processing_jobs` stores one shared queue for Stories,
+Podcasts and Films. Admin media uploads stage a draft and enqueue processing
+when a media URL is present. Run the worker with
+`docker compose --profile media-processing up -d media-worker` after migrations.
+One worker processes one item at a time; additional replicas claim distinct
+jobs through PostgreSQL locks. The worker streams same-origin `/media/` files,
+checks the source checksum, transcribes or validates existing cues, and saves a
+review artifact. It never publishes content or changes the media item. Admins
+inspect and correct timing, then explicitly accept it. Cancellation, bounded
+retries, progress, lease recovery and an ASR checkpoint survive page closure
+and worker restart.
+
+Set `MEDIA_PUBLIC_URL` to the public site origin so the worker can map stored
+URLs to `http://api:8080`; external media origins are rejected. The `media-models`
+volume keeps downloaded Whisper models between restarts. Set
+`MEDIA_JOBS_MAX_BYTES` to cap an individual upload (default 2 GiB). This worker
+uses local CPU inference and does not call a paid alignment API. Cover approval
+and translation approval remain separate Admin decisions.
+The worker image uses Python 3.11 with PyAV 18.1. If the default image registry
+or Python package index is unavailable, set `PYTHON_BASE` or `PIP_INDEX_URL`
+for the Compose build. A cached Whisper model loads locally without a network
+lookup; the first run still downloads the model into `media-models`.
 
 **Load-speed choices:** content-addressed keys + a one-year immutable cache
 (instant repeat loads / CDN-friendly), HTTP range requests for video, and on the

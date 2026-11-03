@@ -19,6 +19,31 @@ func (s *storyStore) Put(_ context.Context, key, _ string, data []byte) (string,
 	return "https://cdn.example/" + key, nil
 }
 
+func TestStorySubtitleTimingPreserved(t *testing.T) {
+	input := "1\n00:00:01,250 --> 00:00:03,500\nThe boat moved.\n\n2\n00:00:04,000 --> 00:00:06,125\nThe sea was dark.\n"
+	cues := transcriptFromFile(input)
+	if len(cues) != 2 || cues[0].Start == nil || cues[0].End == nil || *cues[0].Start != 1.25 || *cues[0].End != 3.5 || *cues[1].Start != 4 || *cues[1].End != 6.125 {
+		t.Fatalf("subtitle timing lost: %+v", cues)
+	}
+	plain := transcriptFromFile("The boat moved.\nThe sea was dark.")
+	if len(plain) != 2 || plain[0].Start != nil || plain[1].End != nil {
+		t.Fatalf("plain transcript should remain untimed: %+v", plain)
+	}
+	vtt := "WEBVTT\n\nopening\n00:00:01.250 --> 00:00:03.500 align:start\nThe boat moved.\n\nnext\n00:00:04.000 --> 00:00:06.125\nThe sea was dark.\n"
+	vttCues := transcriptFromFile(vtt)
+	if !subtitleTimingValid(vtt, vttCues) || len(vttCues) != 2 || vttCues[0].Text != "The boat moved." || vttCues[1].Text != "The sea was dark." || *vttCues[0].Start != 1.25 || *vttCues[1].End != 6.125 {
+		t.Fatalf("WebVTT cue identifiers/settings broke timing: %+v", vttCues)
+	}
+	vttLines := subtitleLines(vtt)
+	if len(vttLines) != 2 || vttLines[0] != "The boat moved." || vttLines[1] != "The sea was dark." {
+		t.Fatalf("WebVTT translation lines included cue identifiers: %+v", vttLines)
+	}
+	bad := "WEBVTT\n\n00:00:90.000 --> 00:00:95.000\nInvalid clock.\n"
+	if subtitleTimingValid(bad, transcriptFromFile(bad)) {
+		t.Fatal("malformed timed subtitle was accepted as an untimed transcript")
+	}
+}
+
 func TestStoryArchiveDryRunStageDuplicateAndPublication(t *testing.T) {
 	ctx := context.Background()
 	repo := courserepo.NewMemoryCourseRepo()
