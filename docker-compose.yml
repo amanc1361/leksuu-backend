@@ -101,11 +101,9 @@ services:
       migrate:
         condition: service_completed_successfully
 
-  # Enable with: docker compose --profile media-processing up -d media-worker
-  # Each replica claims one durable PostgreSQL job at a time. Model files stay
-  # in a named volume across restarts; results remain drafts until Admin review.
+  # The worker is part of the default stack so imports are processed without
+  # an extra profile switch. Each replica claims one durable PostgreSQL job.
   media-worker:
-    profiles: ["media-processing"]
     build:
       context: .
       dockerfile: Dockerfile.media-worker

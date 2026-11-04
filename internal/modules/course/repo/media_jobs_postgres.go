@@ -42,7 +42,7 @@ func scanMediaJob(row pgx.Row) (*coursedomain.MediaProcessingJob, error) {
 func (r *PostgresMediaJobRepo) Enqueue(ctx context.Context, itemID, kind, operation, targetLanguage, payloadSHA256 string, payload json.RawMessage) (*coursedomain.MediaProcessingJob, error) {
 	return scanMediaJob(r.pool.QueryRow(ctx, `INSERT INTO media_processing_jobs(item_id,kind,operation,target_language,payload_sha256,payload_snapshot,events)
 		VALUES($1::uuid,$2,$3,$4,$5,$6::jsonb,'[{"event":"queued"}]'::jsonb)
-		ON CONFLICT(item_id,operation,target_language,payload_sha256) WHERE status IN ('pending','running','review')
+		ON CONFLICT(item_id,operation,target_language,payload_sha256) WHERE status IN ('pending','running','review','ready')
 		DO UPDATE SET updated_at=media_processing_jobs.updated_at RETURNING `+jobColumns, itemID, kind, operation, targetLanguage, payloadSHA256, payload))
 }
 

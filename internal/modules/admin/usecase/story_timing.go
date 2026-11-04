@@ -13,10 +13,11 @@ import (
 var ErrStoryTimingConflict = apperr.New("admin.story_timing_conflict", apperr.KindConflict)
 
 type StoryTimingCue struct {
-	Text         string   `json:"text"`
-	Start        *float64 `json:"start,omitempty"`
-	End          *float64 `json:"end,omitempty"`
-	TimingStatus string   `json:"timing_status,omitempty"`
+	Text         string            `json:"text"`
+	Start        *float64          `json:"start,omitempty"`
+	End          *float64          `json:"end,omitempty"`
+	TimingStatus string            `json:"timing_status,omitempty"`
+	Words        []MediaWordTiming `json:"words,omitempty"`
 }
 
 type StoryTimingInput struct {
