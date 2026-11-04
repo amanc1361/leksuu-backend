@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	courserepo "github.com/leksuu/platform/internal/modules/course/repo"
+	"github.com/leksuu/platform/internal/shared/authn"
 )
 
 func TestStoryTimingBackfillPreservesPayloadAndRejectsMismatches(t *testing.T) {
@@ -159,5 +160,25 @@ func TestStoryTimingRevisionUpdatesOneCueSafely(t *testing.T) {
 	locked.Replacement = StoryTimingCue{Text: second, Start: point(4), End: point(6)}
 	if _, err := svc.ReviseStoryTiming(ctx, "test-story-1", locked); !errors.Is(err, ErrStoryTimingConflict) {
 		t.Fatalf("confirmed not-in-audio cue changed: %v", err)
+	}
+	adminCtx := authn.NewContext(ctx, authn.Principal{Subject: "reviewer", Roles: []string{"admin"}})
+	classify := StoryTimingRevisionInput{AudioSHA256: sha, Paragraph: 2,
+		Expected: locked.Expected, Replacement: locked.Expected,
+		ReviewDecision: "classification_only", ContentKind: "introduction"}
+	if result, err := svc.ReviseStoryTiming(adminCtx, "test-story-1", classify); err != nil || !result.Updated {
+		t.Fatalf("classification-only review of unspoken cue failed: %+v %v", result, err)
+	}
+	if _, err := svc.ReviseStoryTiming(adminCtx, "test-story-1", classify); !errors.Is(err, ErrStoryTimingConflict) {
+		t.Fatalf("stale classification edit accepted: %v", err)
+	}
+	items, err = svc.AdminMedia(ctx, "story")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var classified map[string]any
+	_ = json.Unmarshal(items[0].Payload, &classified)
+	cue := classified["transcript"].([]any)[1].(map[string]any)
+	if cue["content_kind"] != "introduction" || cue["timing_status"] != "not_in_audio" {
+		t.Fatalf("content review changed audio presence: %+v", cue)
 	}
 }

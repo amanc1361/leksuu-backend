@@ -30,20 +30,21 @@ type StoryImportIssue struct {
 }
 
 type StoryImportItem struct {
-	SourceID     string             `json:"source_id"`
-	Title        string             `json:"title"`
-	Position     int                `json:"position"`
-	PartNumber   int                `json:"part_number,omitempty"`
-	Transcript   int                `json:"transcript_lines"`
-	TimedCues    int                `json:"timed_cues"`
-	HasCover     bool               `json:"has_cover"`
-	Translations map[string]int     `json:"translation_lines"`
-	AudioPath    string             `json:"audio_path,omitempty"`
-	AudioBytes   int64              `json:"audio_bytes,omitempty"`
-	Action       string             `json:"action"`
-	Valid        bool               `json:"valid"`
-	Issues       []StoryImportIssue `json:"issues"`
-	item         storyArchiveItem
+	SourceID        string             `json:"source_id"`
+	Title           string             `json:"title"`
+	Position        int                `json:"position"`
+	PartNumber      int                `json:"part_number,omitempty"`
+	Transcript      int                `json:"transcript_lines"`
+	TimedCues       int                `json:"timed_cues"`
+	HasCover        bool               `json:"has_cover"`
+	Translations    map[string]int     `json:"translation_lines"`
+	AudioPath       string             `json:"audio_path,omitempty"`
+	AudioBytes      int64              `json:"audio_bytes,omitempty"`
+	Action          string             `json:"action"`
+	ProcessingJobID string             `json:"processing_job_id,omitempty"`
+	Valid           bool               `json:"valid"`
+	Issues          []StoryImportIssue `json:"issues"`
+	item            storyArchiveItem
 }
 
 type StoryImportReport struct {
@@ -460,10 +461,43 @@ func parseStoryArchive(data []byte) ([]StoryImportItem, map[string]*zip.File, er
 				preview.item.Transcript = item.Transcript
 			}
 		}
+		cueIDs := map[string]bool{}
 		for i := range item.Transcript {
 			item.Transcript[i].Text = strings.TrimSpace(item.Transcript[i].Text)
 			if item.Transcript[i].Text == "" {
 				preview.Issues = append(preview.Issues, issue("error", "transcript_blank", fmt.Sprintf("Transcript line %d is blank.", i+1)))
+			}
+			cue := item.Transcript[i]
+			if cue.CueID != "" {
+				if cueIDs[cue.CueID] {
+					preview.Issues = append(preview.Issues, issue("error", "cue_id_duplicate", fmt.Sprintf("Transcript cue ID %q is repeated.", cue.CueID)))
+				}
+				cueIDs[cue.CueID] = true
+			}
+			switch cue.ContentKind {
+			case "", "narrative", "introduction", "ending", "credit", "uncertain":
+			default:
+				preview.Issues = append(preview.Issues, issue("error", "content_kind_invalid", fmt.Sprintf("Transcript line %d has an invalid content kind.", i+1)))
+			}
+			if cue.TimingStatus != "" && cue.TimingStatus != "unverified" && cue.TimingStatus != "not_in_audio" {
+				preview.Issues = append(preview.Issues, issue("error", "timing_status_invalid", fmt.Sprintf("Transcript line %d has an invalid audio status.", i+1)))
+			}
+			if cue.TimingStatus == "not_in_audio" && (cue.Start != nil || cue.End != nil) {
+				preview.Issues = append(preview.Issues, issue("error", "timing_contradiction", fmt.Sprintf("Transcript line %d is marked absent but also timed.", i+1)))
+			}
+			if len(cue.Words) > 0 {
+				if cue.Start == nil || cue.End == nil {
+					preview.Issues = append(preview.Issues, issue("error", "word_timing_without_cue", fmt.Sprintf("Transcript line %d has word timing without paragraph timing.", i+1)))
+				} else {
+					last := *cue.Start
+					for _, word := range cue.Words {
+						if math.IsNaN(word.Start) || math.IsNaN(word.End) || math.IsInf(word.Start, 0) || math.IsInf(word.End, 0) || word.Start < last || word.End <= word.Start || word.End > *cue.End+0.05 {
+							preview.Issues = append(preview.Issues, issue("error", "word_timing_invalid", fmt.Sprintf("Transcript line %d has invalid or overlapping word timing.", i+1)))
+							break
+						}
+						last = word.End
+					}
+				}
 			}
 		}
 		preview.item.Transcript = item.Transcript
@@ -487,7 +521,7 @@ func parseStoryArchive(data []byte) ([]StoryImportItem, map[string]*zip.File, er
 			}
 		}
 		if timed > 0 && timed != len(item.Transcript) {
-			preview.Issues = append(preview.Issues, issue("error", "timing_partial", "Every transcript line needs start and end timing when timing is supplied."))
+			preview.Issues = append(preview.Issues, issue("warning", "timing_partial", "Some transcript lines still need audio timing review."))
 		}
 		preview.TimedCues = timed
 		for _, locale := range []string{"fa", "ckb"} {
@@ -695,11 +729,20 @@ func (s *Service) ImportStoryArchive(ctx context.Context, data []byte, dryRun bo
 			"published": false,
 		}
 		body, _ := json.Marshal(payload)
-		if _, err := s.AddItem(ctx, lessonID, coursedomain.KindStory, body, 0, p.SourceID); err != nil {
+		created, err := s.AddItem(ctx, lessonID, coursedomain.KindStory, body, 0, p.SourceID)
+		if err != nil {
 			return nil, err
 		}
 		p.Action = "created_draft"
 		report.Created++
+		if s.mediaJobs != nil {
+			job, queueErr := s.EnqueueMediaJob(ctx, created.ID)
+			if queueErr != nil {
+				p.Issues = append(p.Issues, issue("warning", "processing_queue_failed", "Draft was created; queue synchronization again from Admin Media."))
+			} else {
+				p.ProcessingJobID = job.ID
+			}
+		}
 	}
 	return report, nil
 }

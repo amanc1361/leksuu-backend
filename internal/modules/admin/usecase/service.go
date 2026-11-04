@@ -545,6 +545,15 @@ type MediaCue struct {
 	Text         string            `json:"text"`
 	Translation  map[string]string `json:"translation,omitempty"`
 	TimingStatus string            `json:"timing_status,omitempty"`
+	CueID        string            `json:"cue_id,omitempty"`
+	ContentKind  string            `json:"content_kind,omitempty"`
+	Words        []MediaWordTiming `json:"words,omitempty"`
+}
+
+type MediaWordTiming struct {
+	Start float64 `json:"start"`
+	End   float64 `json:"end"`
+	Word  string  `json:"word,omitempty"`
 }
 
 // ImportMediaInput stages standalone media as a draft.

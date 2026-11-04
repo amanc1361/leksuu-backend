@@ -213,8 +213,10 @@ func (s *Service) ApproveMediaJob(ctx context.Context, id string) (*MediaProcess
 		return nil, ErrMediaJobConflict
 	}
 	var result struct {
-		AudioSHA256 string           `json:"audio_sha256"`
-		Cues        []StoryTimingCue `json:"cues"`
+		AudioSHA256         string            `json:"audio_sha256"`
+		Cues                []StoryTimingCue  `json:"cues"`
+		Exceptions          []json.RawMessage `json:"exceptions"`
+		UnmatchedSpokenRuns []json.RawMessage `json:"unmatched_spoken_runs"`
 	}
 	if json.Unmarshal(job.Result, &result) != nil || len(result.Cues) == 0 {
 		return nil, ErrMediaJobConflict
@@ -282,7 +284,7 @@ func (s *Service) ApproveMediaJob(ctx context.Context, id string) (*MediaProcess
 	if generatedTranscript {
 		payload["transcript_status"], _ = json.Marshal("approved")
 	}
-	if untimed > 0 {
+	if untimed > 0 || len(result.Exceptions) > 0 || len(result.UnmatchedSpokenRuns) > 0 {
 		payload["timing_status"], _ = json.Marshal("partial_reviewed")
 	} else {
 		payload["timing_status"], _ = json.Marshal("approved")
