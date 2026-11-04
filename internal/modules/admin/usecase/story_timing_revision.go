@@ -13,12 +13,14 @@ import (
 )
 
 type StoryTimingRevisionInput struct {
-	AudioSHA256    string         `json:"audio_sha256"`
-	Paragraph      int            `json:"paragraph"`
-	Expected       StoryTimingCue `json:"expected"`
-	Replacement    StoryTimingCue `json:"replacement"`
-	ReviewDecision string         `json:"review_decision,omitempty"`
-	ReviewNote     string         `json:"review_note,omitempty"`
+	AudioSHA256         string         `json:"audio_sha256"`
+	Paragraph           int            `json:"paragraph"`
+	Expected            StoryTimingCue `json:"expected"`
+	Replacement         StoryTimingCue `json:"replacement"`
+	ReviewDecision      string         `json:"review_decision,omitempty"`
+	ReviewNote          string         `json:"review_note,omitempty"`
+	ExpectedContentKind string         `json:"expected_content_kind,omitempty"`
+	ContentKind         string         `json:"content_kind,omitempty"`
 }
 
 type StoryTimingRevisionResult struct {
@@ -55,10 +57,20 @@ func (s *Service) ReviseStoryTiming(ctx context.Context, sourceID string, in Sto
 		!validRevisionCue(in.Expected) || !validRevisionCue(in.Replacement) || in.Expected.Text != in.Replacement.Text || len(in.ReviewNote) > 1000 {
 		return result, apperr.ErrBadRequest
 	}
+	if in.ContentKind != "" {
+		switch in.ContentKind {
+		case "narrative", "introduction", "ending", "credit", "uncertain":
+		default:
+			return result, apperr.ErrBadRequest
+		}
+		if in.ReviewDecision == "" {
+			return result, apperr.ErrBadRequest
+		}
+	}
 	var reviewer string
 	if in.ReviewDecision != "" {
 		switch in.ReviewDecision {
-		case "accepted", "corrected", "rejected", "not_in_audio":
+		case "accepted", "corrected", "rejected", "not_in_audio", "classification_only":
 		default:
 			return result, apperr.ErrBadRequest
 		}
@@ -71,6 +83,9 @@ func (s *Service) ReviseStoryTiming(ctx context.Context, sourceID string, in Sto
 			return result, apperr.ErrBadRequest
 		}
 		if in.ReviewDecision == "not_in_audio" && in.Replacement.TimingStatus != "not_in_audio" {
+			return result, apperr.ErrBadRequest
+		}
+		if in.ReviewDecision == "classification_only" && (in.ContentKind == "" || !sameRevisionCue(in.Expected, in.Replacement)) {
 			return result, apperr.ErrBadRequest
 		}
 	}
@@ -120,13 +135,24 @@ func (s *Service) ReviseStoryTiming(ctx context.Context, sourceID string, in Sto
 	if err != nil || current.Text != in.Expected.Text {
 		return result, ErrStoryTimingConflict
 	}
+	if in.ContentKind != "" {
+		var existingKind string
+		_ = json.Unmarshal(transcript[index]["content_kind"], &existingKind)
+		if existingKind != in.ExpectedContentKind {
+			return result, ErrStoryTimingConflict
+		}
+	}
 	if in.ReviewDecision == "rejected" && !sameRevisionCue(current, in.Replacement) {
 		return result, apperr.ErrBadRequest
 	}
 	if sameRevisionCue(current, in.Replacement) && in.ReviewDecision == "" {
 		return result, nil
 	}
-	if !sameRevisionCue(current, in.Expected) || current.TimingStatus == "not_in_audio" {
+	if !sameRevisionCue(current, in.Expected) || (current.TimingStatus == "not_in_audio" && in.ReviewDecision != "classification_only") {
+		return result, ErrStoryTimingConflict
+	}
+	if len(transcript[index]["words"]) > 0 && !sameRevisionCue(current, in.Replacement) {
+		// Exact word timestamps cannot be silently kept under a revised cue window.
 		return result, ErrStoryTimingConflict
 	}
 	if in.Replacement.Start != nil {
@@ -155,6 +181,9 @@ func (s *Service) ReviseStoryTiming(ctx context.Context, sourceID string, in Sto
 	} else {
 		transcript[index]["timing_status"], _ = json.Marshal(in.Replacement.TimingStatus)
 	}
+	if in.ContentKind != "" {
+		transcript[index]["content_kind"], _ = json.Marshal(in.ContentKind)
+	}
 	if reviewer != "" {
 		var history []map[string]any
 		if raw := transcript[index]["editorial_review_history"]; len(raw) > 0 && json.Unmarshal(raw, &history) != nil {
@@ -162,9 +191,14 @@ func (s *Service) ReviseStoryTiming(ctx context.Context, sourceID string, in Sto
 		}
 		entry := map[string]any{"decision": in.ReviewDecision, "reviewer_id": reviewer,
 			"at": time.Now().UTC().Format(time.RFC3339Nano), "note": strings.TrimSpace(in.ReviewNote)}
+		if in.ContentKind != "" {
+			entry["content_kind"] = in.ContentKind
+		}
 		history = append(history, entry)
 		transcript[index]["editorial_review_history"], _ = json.Marshal(history)
-		transcript[index]["editorial_review"], _ = json.Marshal(entry)
+		if in.ReviewDecision != "classification_only" {
+			transcript[index]["editorial_review"], _ = json.Marshal(entry)
+		}
 	}
 	payload["transcript"], err = json.Marshal(transcript)
 	if err != nil {

@@ -308,13 +308,31 @@ def align(transcript, witness, duration, offset, audible_onset=None):
         cue = {"text": paragraph["text"]}
         if reasons:
             cue["timing_status"] = "unverified"
-            exceptions.append({"paragraph": i + 1, "reasons": reasons})
+            window_start = max(0, pairs[0][1] - 4) if pairs else None
+            window_end = min(len(spoken), pairs[-1][1] + 5) if pairs else None
+            exceptions.append({"paragraph": i + 1, "reasons": reasons,
+                               "matched_words": len(pairs), "source_words": count,
+                               "match_ratio": round(len(pairs) / count, 3) if count else 0,
+                               "candidate_start": round(first, 2) if first is not None else None,
+                               "candidate_end": round(last, 2) if last is not None else None,
+                               "asr_context": " ".join(word[0] for word in spoken[window_start:window_end]) if window_start is not None else ""})
         else:
             cue["start"] = round(first, 2)
             cue["end"] = round(last, 2)
             previous_end = cue["end"]
         cues.append(cue)
-    return cues, exceptions, len(matched), len(source)
+    matched_spoken = set(matched.values())
+    extra = []
+    run = []
+    for j in range(len(spoken) + 1):
+        if j < len(spoken) and j not in matched_spoken:
+            run.append(j)
+        elif run:
+            if len(run) >= 6:
+                extra.append({"start": round(spoken[run[0]][1], 2), "end": round(spoken[run[-1]][2], 2),
+                              "words": len(run), "text": " ".join(spoken[k][0] for k in run)})
+            run = []
+    return cues, exceptions, extra, len(matched), len(source)
 
 
 def process(job):
@@ -336,20 +354,18 @@ def process(job):
         language = (payload.get("language") or "en").lower()
         if not re.fullmatch(r"[a-z]{2,3}(?:-[a-z]{2,4})?", language):
             raise ValueError("invalid_audio_language")
+        # This worker transcribes the complete MP3; its ASR timestamps already
+        # include any spoken introduction. An additional offset would double it.
         offset = float(payload.get("media_offset_seconds") or 0)
-        if not 0 <= offset <= duration:
-            raise ValueError("invalid_media_offset")
-        # Correctly timed SRT/WebVTT is retained and range-checked against the
-        # actual file. It is still returned for Admin review, not auto-approved.
-        if transcript and all(c.get("start") is not None and c.get("end") is not None for c in transcript):
+        if offset != 0:
+            raise ValueError("media_offset_not_supported_for_full_recording")
+        all_existing_timed = bool(transcript) and all(c.get("start") is not None and c.get("end") is not None for c in transcript)
+        if all_existing_timed:
             previous = 0
             for cue in transcript:
                 if not cue.get("text") or not previous <= cue["start"] < cue["end"] <= duration + 0.3:
                     raise ValueError("invalid_existing_subtitle_timing")
                 previous = cue["end"]
-            return {"audio_sha256": digest, "cues": [{"text": c["text"], "start": c["start"], "end": c["end"]} for c in transcript],
-                    "exceptions": [], "method": "validated_existing_cues", "language": language,
-                    "duration_seconds": duration, "human_editorial_approved": False}
         if job["result"] and job["result"].get("phase") == "asr_checkpoint" and job["result"].get("audio_sha256") == digest:
             witness = job["result"]["witness"]
         else:
@@ -367,9 +383,20 @@ def process(job):
         if not transcript:
             raise ValueError("no_spoken_transcript_detected")
         onset = opening_sound_onset(media)
-        cues, exceptions, matched, total = align(transcript, witness, duration, offset, onset)
+        cues, exceptions, extra, matched, total = align(transcript, witness, duration, offset, onset)
+        if all_existing_timed:
+            for i, cue in enumerate(cues):
+                original = transcript[i]
+                if cue.get("start") is not None and (abs(cue["start"] - original["start"]) > 1 or
+                                                      abs(cue["end"] - original["end"]) > 1):
+                    exceptions.append({"paragraph": i + 1, "reasons": ["existing_timing_disagrees_with_asr"]})
+                cue["start"] = original["start"]
+                cue["end"] = original["end"]
+                cue.pop("timing_status", None)
         return {"audio_sha256": digest, "cues": cues, "exceptions": exceptions,
-                "method": method, "language": language, "duration_seconds": duration,
+                "unmatched_spoken_runs": extra,
+                "method": "validated_existing_cues_with_asr" if all_existing_timed else method,
+                "language": language, "duration_seconds": duration,
                 "opening_sound_onset_seconds": onset,
                 "matched_words": matched, "source_words": total,
                 "human_editorial_approved": False}
