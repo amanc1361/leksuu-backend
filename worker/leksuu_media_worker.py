@@ -41,10 +41,78 @@ MODEL = None
 MODEL_NAME = None
 TRANSLATOR = None
 TRANSLATION_TOKENIZER = None
+ALIGNMENT_VERSION = 2
 
 
 def words(text):
     return TOKEN.findall(text.casefold())
+
+
+def exact_word_timing(cue):
+    tokens = [token for token in cue.get("text", "").split() if TOKEN.search(token)]
+    timed = cue.get("words")
+    start, end = cue.get("start"), cue.get("end")
+    if not tokens or not isinstance(start, (int, float)) or not isinstance(end, (int, float)) or \
+            not isinstance(timed, list) or len(timed) != len(tokens):
+        return False
+    previous = start
+    for word in timed:
+        word_start, word_end = word.get("start"), word.get("end")
+        if not isinstance(word_start, (int, float)) or not isinstance(word_end, (int, float)) or \
+                word_start < previous or word_end <= word_start or word_start < start or word_end > end + 0.05:
+            return False
+        previous = word_end
+    return True
+
+
+def alignment_identity(payload):
+    return {"url": payload.get("url", ""), "audio_sha256": payload.get("audio_sha256", ""),
+            "language": payload.get("language", "en"),
+            "transcript_texts": [cue.get("text", "") for cue in (payload.get("transcript") or [])]}
+
+
+def needs_story_synchronization(payload):
+    if not payload.get("url"):
+        return False
+    transcript = payload.get("transcript") or []
+    if not transcript:
+        return True
+    complete = all(cue.get("timing_status") == "not_in_audio" or exact_word_timing(cue)
+                   for cue in transcript)
+    if complete:
+        return False
+    return not (payload.get("alignment_version", 0) >= ALIGNMENT_VERSION and
+                payload.get("alignment_source") == alignment_identity(payload))
+
+
+def reconcile_story_jobs():
+    """Queue current story payloads once; API enqueue remains the fast path."""
+    queued = 0
+    with db() as connection:
+        rows = connection.execute("""SELECT id,payload FROM lesson_items
+            WHERE kind='story' AND nullif(payload->>'url','') IS NOT NULL ORDER BY id""").fetchall()
+        for row in rows:
+            payload = row["payload"]
+            if not needs_story_synchronization(payload):
+                continue
+            existing = connection.execute("""SELECT 1 FROM media_processing_jobs
+                WHERE item_id=%s AND operation='synchronize' AND target_language=''
+                  AND payload_snapshot=%s AND status IN ('pending','running','review','ready','approved','failed')
+                LIMIT 1""", (row["id"], Jsonb(payload))).fetchone()
+            if existing:
+                continue
+            raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            digest = hashlib.sha256(raw.encode()).hexdigest()
+            connection.execute("""INSERT INTO media_processing_jobs
+                (item_id,kind,operation,target_language,payload_sha256,payload_snapshot,events)
+                VALUES (%s,'story','synchronize','',%s,%s,'[{"event":"queued_automatically"}]'::jsonb)
+                ON CONFLICT (item_id,operation,target_language,payload_sha256)
+                WHERE status IN ('pending','running','review','ready') DO NOTHING""",
+                (row["id"], digest, Jsonb(payload)))
+            queued += 1
+    if queued:
+        print(json.dumps({"event": "story_reconciliation", "queued": queued}), flush=True)
+    return queued
 
 
 def db():
@@ -163,7 +231,8 @@ def transcribe(path, language):
     if MODEL_NAME != model_name:
         model_root = os.environ.get("MEDIA_JOBS_MODEL_DIR",
                                 str(Path(tempfile.gettempdir()) / "leksuu-whisper-models"))
-        options = {"device": "cpu", "compute_type": "int8", "cpu_threads": 4,
+        options = {"device": "cpu", "compute_type": "int8",
+                   "cpu_threads": max(1, int(os.environ.get("MEDIA_JOBS_CPU_THREADS", "2"))),
                    "download_root": model_root}
         try:
             MODEL = WhisperModel(model_name, local_files_only=True, **options)
@@ -396,9 +465,14 @@ def process(job):
         if all_existing_timed:
             for i, cue in enumerate(cues):
                 original = transcript[i]
-                if cue.get("start") is not None and (abs(cue["start"] - original["start"]) > 1 or
-                                                      abs(cue["end"] - original["end"]) > 1):
+                disagrees = cue.get("start") is None or abs(cue["start"] - original["start"]) > 1 or \
+                    abs(cue["end"] - original["end"]) > 1
+                if disagrees:
                     exceptions.append({"paragraph": i + 1, "reasons": ["existing_timing_disagrees_with_asr"]})
+                    cue.pop("words", None)
+                elif cue.get("words") and not all(original["start"] <= word["start"] < word["end"] <= original["end"] + 0.05
+                                                   for word in cue["words"]):
+                    cue.pop("words", None)
                 cue["start"] = original["start"]
                 cue["end"] = original["end"]
                 cue.pop("timing_status", None)
@@ -409,6 +483,45 @@ def process(job):
                 "opening_sound_onset_seconds": onset,
                 "matched_words": matched, "source_words": total,
                 "human_editorial_approved": False}
+
+
+def merge_synchronization(source, result, job_id):
+    cues = source.get("transcript") or []
+    aligned = result.get("cues") or []
+    generated = not cues
+    if not aligned or (cues and len(cues) != len(aligned)):
+        raise ValueError("transcript_changed_since_queue")
+    updated = json.loads(json.dumps(source))
+    if generated:
+        updated["transcript"] = [{"text": candidate["text"]} for candidate in aligned]
+        cues = updated["transcript"]
+        updated["transcript_status"] = "needs_review"
+    unresolved = generated or bool(result.get("exceptions") or result.get("unmatched_spoken_runs"))
+    for original, candidate in zip(updated["transcript"], aligned):
+        if original.get("text") != candidate.get("text"):
+            raise ValueError("transcript_changed_since_queue")
+        if original.get("timing_status") == "not_in_audio" or original.get("review_decision") in ("accepted", "corrected", "not_in_audio"):
+            continue
+        if original.get("start") is not None or original.get("end") is not None:
+            # Paragraph timing is immutable; exact ASR word timing may enrich
+            # it when process() verified the candidate fits its boundaries.
+            if candidate.get("words"):
+                original["words"] = candidate["words"]
+            continue
+        if candidate.get("start") is None or candidate.get("end") is None:
+            unresolved = True
+            original["timing_status"] = "unverified"
+            continue
+        original["start"] = candidate["start"]
+        original["end"] = candidate["end"]
+        if candidate.get("words"):
+            original["words"] = candidate["words"]
+        original.pop("timing_status", None)
+    updated["timing_status"] = "needs_review" if unresolved else "ready"
+    updated["alignment_job_id"] = str(job_id)
+    updated["alignment_source"] = alignment_identity(source)
+    updated["alignment_version"] = ALIGNMENT_VERSION
+    return updated, unresolved
 
 
 def finish(job_id, worker_id, result=None, error=None):
@@ -428,39 +541,7 @@ def finish(job_id, worker_id, result=None, error=None):
                     current = connection.execute("SELECT payload FROM lesson_items WHERE id=%s FOR UPDATE", (row["item_id"],)).fetchone()
                     if not current or current["payload"] != source:
                         raise ValueError("source_changed_since_queue")
-                    cues = source.get("transcript") or []
-                    aligned = result.get("cues") or []
-                    generated = not cues
-                    if not aligned or (cues and len(cues) != len(aligned)):
-                        raise ValueError("transcript_changed_since_queue")
-                    updated = json.loads(json.dumps(source))
-                    if generated:
-                        updated["transcript"] = [{"text": candidate["text"]} for candidate in aligned]
-                        cues = updated["transcript"]
-                        updated["transcript_status"] = "needs_review"
-                    unresolved = generated or bool(result.get("exceptions") or result.get("unmatched_spoken_runs"))
-                    for original, candidate in zip(updated["transcript"], aligned):
-                        if original.get("text") != candidate.get("text"):
-                            raise ValueError("transcript_changed_since_queue")
-                        if original.get("timing_status") == "not_in_audio" or original.get("review_decision") in ("accepted", "corrected", "not_in_audio"):
-                            continue
-                        if original.get("start") is not None or original.get("end") is not None:
-                            continue  # Existing and human-approved timing is immutable.
-                        if candidate.get("start") is None or candidate.get("end") is None:
-                            unresolved = True
-                            original["timing_status"] = "unverified"
-                            continue
-                        original["start"] = candidate["start"]
-                        original["end"] = candidate["end"]
-                        if candidate.get("words"):
-                            original["words"] = candidate["words"]
-                        original.pop("timing_status", None)
-                    updated["timing_status"] = "needs_review" if unresolved else "ready"
-                    updated["alignment_job_id"] = str(job_id)
-                    updated["alignment_source"] = {"url": source.get("url", ""),
-                        "audio_sha256": source.get("audio_sha256", ""),
-                        "language": source.get("language", "en"),
-                        "transcript_texts": [cue["text"] for cue in cues]}
+                    updated, unresolved = merge_synchronization(source, result, job_id)
                     connection.execute("UPDATE lesson_items SET payload=%s WHERE id=%s AND payload=%s",
                                        (Jsonb(updated), row["item_id"], Jsonb(source)))
                     next_status = "review" if unresolved else "ready"
@@ -504,9 +585,18 @@ def main():
     if args.once:
         run_once(worker_id)
         return
+    reconcile_story_jobs()
+    interval = max(30, int(os.environ.get("MEDIA_JOBS_RECONCILE_SECONDS", "300")))
+    next_reconcile = time.monotonic() + interval
     while True:
         if not run_once(worker_id):
             time.sleep(2)
+        if time.monotonic() >= next_reconcile:
+            try:
+                reconcile_story_jobs()
+            except Exception as exc:
+                print(json.dumps({"event": "story_reconciliation_failed", "error": type(exc).__name__}), flush=True)
+            next_reconcile = time.monotonic() + interval
 
 
 if __name__ == "__main__":

@@ -5,8 +5,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"math"
 	"os"
 	"strings"
+	"unicode"
 
 	coursedomain "github.com/leksuu/platform/internal/modules/course/domain"
 	"github.com/leksuu/platform/internal/shared/apperr"
@@ -50,27 +52,30 @@ func (s *Service) EnqueueMediaJob(ctx context.Context, itemID string) (*MediaPro
 			Language        string   `json:"language"`
 			TranscriptTexts []string `json:"transcript_texts"`
 		} `json:"alignment_source"`
-		TimingStatus string `json:"timing_status"`
-		Transcript   []struct {
-			Text  string   `json:"text"`
-			Start *float64 `json:"start"`
-			End   *float64 `json:"end"`
+		TimingStatus     string `json:"timing_status"`
+		AlignmentVersion int    `json:"alignment_version"`
+		Transcript       []struct {
+			Text         string            `json:"text"`
+			Start        *float64          `json:"start"`
+			End          *float64          `json:"end"`
+			TimingStatus string            `json:"timing_status"`
+			Words        []MediaWordTiming `json:"words"`
 		} `json:"transcript"`
 	}
 	if json.Unmarshal(item.Payload, &payload) != nil || strings.TrimSpace(payload.URL) == "" {
 		return nil, apperr.ErrBadRequest
 	}
-	if payload.TimingStatus == "approved" || payload.TimingStatus == "human_approved" {
-		return nil, ErrMediaJobConflict
-	}
 	if len(payload.Transcript) > 0 {
-		allTimed := true
 		texts := make([]string, len(payload.Transcript))
+		allExact := true
 		for i, cue := range payload.Transcript {
 			texts[i] = cue.Text
-			allTimed = allTimed && cue.Start != nil && cue.End != nil
+			if cue.TimingStatus == "not_in_audio" {
+				continue
+			}
+			allExact = allExact && exactMediaWordTiming(cue.Text, cue.Start, cue.End, cue.Words)
 		}
-		if allTimed || (payload.AlignmentSource.URL == payload.URL &&
+		if allExact || (payload.AlignmentVersion >= 2 && payload.AlignmentSource.URL == payload.URL &&
 			payload.AlignmentSource.AudioSHA256 == payload.AudioSHA256 &&
 			payload.AlignmentSource.Language == payload.Language &&
 			len(payload.AlignmentSource.TranscriptTexts) == len(texts) &&
@@ -82,6 +87,31 @@ func (s *Service) EnqueueMediaJob(ctx context.Context, itemID string) (*MediaPro
 	// are revalidated there and returned as a draft, never silently overwritten.
 	hash := sha256.Sum256(item.Payload)
 	return s.mediaJobs.Enqueue(ctx, item.ID, item.Kind, "synchronize", "", hex.EncodeToString(hash[:]), item.Payload)
+}
+
+func exactMediaWordTiming(text string, start, end *float64, words []MediaWordTiming) bool {
+	if start == nil || end == nil || math.IsNaN(*start) || math.IsNaN(*end) ||
+		math.IsInf(*start, 0) || math.IsInf(*end, 0) || *start < 0 || *end <= *start {
+		return false
+	}
+	tokens := 0
+	for _, field := range strings.Fields(text) {
+		if strings.IndexFunc(field, unicode.IsLetter) >= 0 {
+			tokens++
+		}
+	}
+	if tokens == 0 || len(words) != tokens {
+		return false
+	}
+	previous := *start
+	for _, word := range words {
+		if math.IsNaN(word.Start) || math.IsNaN(word.End) || math.IsInf(word.Start, 0) || math.IsInf(word.End, 0) ||
+			word.Start < previous || word.End <= word.Start || word.Start < *start || word.End > *end+0.05 {
+			return false
+		}
+		previous = word.End
+	}
+	return true
 }
 
 func stringSliceEqual(a, b []string) bool {

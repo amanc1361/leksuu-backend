@@ -15,6 +15,25 @@ sys.path.insert(0, str(Path(tempfile.gettempdir()) / "leksuu-align-pydeps"))
 import psycopg
 from psycopg.rows import dict_row
 
+ALIGNMENT_VERSION = 2
+
+
+def exact_word_timing(cue):
+    words = cue.get("words")
+    tokens = [token for token in cue.get("text", "").split() if any(ch.isalpha() for ch in token)]
+    start, end = cue.get("start"), cue.get("end")
+    if not tokens or not isinstance(words, list) or len(words) != len(tokens) or \
+            not isinstance(start, (int, float)) or not isinstance(end, (int, float)):
+        return False
+    previous = start
+    for word in words:
+        word_start, word_end = word.get("start"), word.get("end")
+        if not isinstance(word_start, (int, float)) or not isinstance(word_end, (int, float)) or \
+                word_start < previous or word_end <= word_start or word_start < start or word_end > end + 0.05:
+            return False
+        previous = word_end
+    return True
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -36,12 +55,11 @@ def main():
         for row in rows:
             payload = row["payload"]
             cues = payload.get("transcript") or []
-            missing = sum(not isinstance(cue.get("start"), (int, float)) or
-                          not isinstance(cue.get("end"), (int, float)) for cue in cues)
-            if not cues or missing == 0 or payload.get("timing_status") in ("approved", "human_approved"):
+            missing = sum(cue.get("timing_status") != "not_in_audio" and not exact_word_timing(cue) for cue in cues)
+            if not cues or missing == 0:
                 continue
             source = payload.get("alignment_source") or {}
-            if source == {"url": payload.get("url", ""), "audio_sha256": payload.get("audio_sha256", ""),
+            if payload.get("alignment_version", 0) >= ALIGNMENT_VERSION and source == {"url": payload.get("url", ""), "audio_sha256": payload.get("audio_sha256", ""),
                           "language": payload.get("language", "en"),
                           "transcript_texts": [cue.get("text") for cue in cues]}:
                 continue
