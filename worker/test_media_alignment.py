@@ -34,6 +34,8 @@ class AlignmentTest(unittest.TestCase):
         self.assertEqual(len(exceptions), 0)
         self.assertEqual(cues[0]["start"], 0)
         self.assertEqual(cues[1]["start"], 5)
+        self.assertEqual(cues[0]["words"][1], {"word": "present", "start": 1, "end": 1.2})
+        self.assertEqual(len(cues[1]["words"]), 4)
         self.assertEqual(extra, [])
 
     def test_missing_spoken_content_is_reported(self):

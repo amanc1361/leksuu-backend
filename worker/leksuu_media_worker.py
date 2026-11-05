@@ -1,7 +1,7 @@
 """Durable PostgreSQL media synchronization worker for Stories, Podcasts and Films.
 
-Run separately from the API. It writes draft review results only. No publication
-or lesson-item payload mutation occurs here. One worker processes one job at a
+Run separately from the API. Verified alignment fills missing timing only;
+uncertain passages remain for review. One worker processes one job at a
 time; PostgreSQL SKIP LOCKED permits additional bounded worker instances.
 """
 
@@ -319,6 +319,15 @@ def align(transcript, witness, duration, offset, audible_onset=None):
         else:
             cue["start"] = round(first, 2)
             cue["end"] = round(last, 2)
+            # Each timestamp comes from a matched ASR word in this recording.
+            # A partial match can locate a paragraph but cannot time every word.
+            if len(pairs) == count and count and len([token for token in paragraph["text"].split() if TOKEN.search(token)]) == count:
+                exact = [spoken[matched[j]] for j in positions]
+                if all(exact[k][1] < exact[k][2] and
+                       (k == 0 or exact[k - 1][2] <= exact[k][1])
+                       for k in range(len(exact))):
+                    cue["words"] = [{"word": source[j][0], "start": round(exact[k][1], 3),
+                                     "end": round(exact[k][2], 3)} for k, j in enumerate(positions)]
             previous_end = cue["end"]
         cues.append(cue)
     matched_spoken = set(matched.values())
@@ -404,7 +413,7 @@ def process(job):
 
 def finish(job_id, worker_id, result=None, error=None):
     with db() as connection:
-        row = connection.execute("SELECT cancel_requested,status FROM media_processing_jobs WHERE id=%s FOR UPDATE", (job_id,)).fetchone()
+        row = connection.execute("SELECT cancel_requested,status,item_id,payload_snapshot,operation FROM media_processing_jobs WHERE id=%s FOR UPDATE", (job_id,)).fetchone()
         if not row or row["status"] != "running":
             return "lost_claim"
         if row["cancel_requested"]:
@@ -413,9 +422,53 @@ def finish(job_id, worker_id, result=None, error=None):
             next_status = "failed"
         else:
             next_status = "review"
+            if row["operation"] == "synchronize":
+                try:
+                    source = row["payload_snapshot"]
+                    current = connection.execute("SELECT payload FROM lesson_items WHERE id=%s FOR UPDATE", (row["item_id"],)).fetchone()
+                    if not current or current["payload"] != source:
+                        raise ValueError("source_changed_since_queue")
+                    cues = source.get("transcript") or []
+                    aligned = result.get("cues") or []
+                    generated = not cues
+                    if not aligned or (cues and len(cues) != len(aligned)):
+                        raise ValueError("transcript_changed_since_queue")
+                    updated = json.loads(json.dumps(source))
+                    if generated:
+                        updated["transcript"] = [{"text": candidate["text"]} for candidate in aligned]
+                        cues = updated["transcript"]
+                        updated["transcript_status"] = "needs_review"
+                    unresolved = generated or bool(result.get("exceptions") or result.get("unmatched_spoken_runs"))
+                    for original, candidate in zip(updated["transcript"], aligned):
+                        if original.get("text") != candidate.get("text"):
+                            raise ValueError("transcript_changed_since_queue")
+                        if original.get("timing_status") == "not_in_audio" or original.get("review_decision") in ("accepted", "corrected", "not_in_audio"):
+                            continue
+                        if original.get("start") is not None or original.get("end") is not None:
+                            continue  # Existing and human-approved timing is immutable.
+                        if candidate.get("start") is None or candidate.get("end") is None:
+                            unresolved = True
+                            original["timing_status"] = "unverified"
+                            continue
+                        original["start"] = candidate["start"]
+                        original["end"] = candidate["end"]
+                        if candidate.get("words"):
+                            original["words"] = candidate["words"]
+                        original.pop("timing_status", None)
+                    updated["timing_status"] = "needs_review" if unresolved else "ready"
+                    updated["alignment_job_id"] = str(job_id)
+                    updated["alignment_source"] = {"url": source.get("url", ""),
+                        "audio_sha256": source.get("audio_sha256", ""),
+                        "language": source.get("language", "en"),
+                        "transcript_texts": [cue["text"] for cue in cues]}
+                    connection.execute("UPDATE lesson_items SET payload=%s WHERE id=%s AND payload=%s",
+                                       (Jsonb(updated), row["item_id"], Jsonb(source)))
+                    next_status = "review" if unresolved else "ready"
+                except ValueError as exc:
+                    next_status, error = "failed", str(exc)
         connection.execute("""UPDATE media_processing_jobs SET status=%s,progress=%s,result=coalesce(%s,result),
             error_code=%s,lease_until=NULL,worker_id=NULL,updated_at=now()
-            WHERE id=%s AND worker_id=%s""", (next_status, 100 if next_status == "review" else 0,
+            WHERE id=%s AND worker_id=%s""", (next_status, 100 if next_status in ("review", "ready") else 0,
                                                Jsonb(result) if result else None, error, job_id, worker_id))
         event(connection, job_id, next_status, error=error)
         return next_status
