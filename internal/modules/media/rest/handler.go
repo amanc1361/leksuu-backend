@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/leksuu/platform/internal/modules/media/domain"
 	"github.com/leksuu/platform/internal/modules/media/usecase"
 	"github.com/leksuu/platform/internal/shared/apperr"
 	"github.com/leksuu/platform/internal/shared/authn"
@@ -245,8 +246,16 @@ func (h *Handler) ArchiveCourseImport(w http.ResponseWriter, r *http.Request) {
 }
 
 type Handler struct {
-	svc      *usecase.Service
-	maxBytes int64
+	svc            *usecase.Service
+	maxBytes       int64
+	multipart      domain.MultipartStore
+	playbackKey    []byte
+	playbackBase   string
+	playbackCDN    bool
+	playbackAccess func(context.Context, string, string, bool) (PlaybackAsset, error)
+	keyOwnership   KeyOwnership
+	playlistReader domain.Reader
+	playlistDir    string
 	// avatarGate answers "may this user upload an avatar?" — wired to the
 	// tutor module (approved teachers) after construction.
 	avatarGate func(ctx context.Context, userID string) bool
@@ -254,6 +263,7 @@ type Handler struct {
 
 // SetAvatarGate wires the late-bound uploader check.
 func (h *Handler) SetAvatarGate(f func(ctx context.Context, userID string) bool) { h.avatarGate = f }
+func (h *Handler) SetMultipartStore(store domain.MultipartStore)                 { h.multipart = store }
 
 func NewHandler(svc *usecase.Service, maxBytes int64) *Handler {
 	return &Handler{svc: svc, maxBytes: maxBytes}
@@ -281,7 +291,7 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 	if ct == "" {
 		ct = http.DetectContentType(data)
 	}
-	up, err := h.svc.Upload(r.Context(), hdr.Filename, ct, data)
+	up, err := h.svc.UploadScoped(r.Context(), hdr.Filename, ct, data, r.FormValue("scope") == "licensed")
 	if err != nil {
 		web.Error(w, r, err)
 		return

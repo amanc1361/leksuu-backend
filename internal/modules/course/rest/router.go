@@ -28,6 +28,9 @@ func (h *Handler) Mount(mux *http.ServeMux, prefix string, guard Guard) {
 	mux.Handle("GET "+prefix+"/courses/{id}", guard.Optional(http.HandlerFunc(h.GetCourse)))
 	mux.Handle("GET "+prefix+"/lessons/{id}", guard.Optional(http.HandlerFunc(h.GetLesson)))
 	mux.Handle("GET "+prefix+"/media-library", guard.Require(http.HandlerFunc(h.MediaLibrary)))
+	mux.Handle("GET "+prefix+"/media-library/items/{id}/progress", guard.Require(http.HandlerFunc(h.GetMediaProgress)))
+	mux.Handle("PUT "+prefix+"/media-library/items/{id}/progress", guard.Require(http.HandlerFunc(h.PutMediaProgress)))
+	mux.Handle("POST "+prefix+"/media-library/items/{id}/attempts", guard.Require(http.HandlerFunc(h.PostMediaAttempt)))
 
 	mux.Handle("POST "+prefix+"/lessons/{id}/complete", guard.Require(http.HandlerFunc(h.CompleteLesson)))
 	mux.Handle("POST "+prefix+"/exercises/{id}/answer", guard.Require(http.HandlerFunc(h.AnswerExercise)))

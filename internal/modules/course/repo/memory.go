@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/leksuu/platform/internal/modules/course/domain"
+	"github.com/leksuu/platform/internal/modules/course/usecase"
 	"github.com/leksuu/platform/internal/shared/id"
 )
 
@@ -730,11 +731,12 @@ func (r *MemoryCourseRepo) CreateExercise(_ context.Context, e *domain.Exercise)
 type MemoryProgressRepo struct {
 	mu           sync.RWMutex
 	entries      []domain.ProgressEntry
+	media        map[string]usecase.MediaProgress
 	lessonCourse func(lessonID string) (string, bool)
 }
 
 func NewMemoryProgressRepo(lessonCourse func(string) (string, bool)) *MemoryProgressRepo {
-	return &MemoryProgressRepo{lessonCourse: lessonCourse}
+	return &MemoryProgressRepo{lessonCourse: lessonCourse, media: map[string]usecase.MediaProgress{}}
 }
 
 func (r *MemoryProgressRepo) Record(_ context.Context, e domain.ProgressEntry) error {

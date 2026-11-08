@@ -558,17 +558,22 @@ type MediaWordTiming struct {
 
 // ImportMediaInput stages standalone media as a draft.
 type ImportMediaInput struct {
-	Kind        string
-	Title       string
-	Language    string
-	CEFR        string
-	URL         string
-	Cover       string
-	Transcript  []MediaCue
-	SourceID    string
-	SourceURL   string
-	Attribution json.RawMessage
-	License     json.RawMessage
+	Kind            string
+	Title           string
+	Artist          string
+	AudioLanguage   string
+	RightsReference string
+	RightsApproved  bool
+	LevelVerified   bool
+	Language        string
+	CEFR            string
+	URL             string
+	Cover           string
+	Transcript      []MediaCue
+	SourceID        string
+	SourceURL       string
+	Attribution     json.RawMessage
+	License         json.RawMessage
 }
 
 // ImportMedia stages standalone media in the hidden system bucket. No course-tree
@@ -576,7 +581,7 @@ type ImportMediaInput struct {
 // shadowing, clip-replay) so nothing downstream changes.
 func (s *Service) ImportMedia(ctx context.Context, in ImportMediaInput) (*coursedomain.LessonItem, error) {
 	kind := strings.TrimSpace(in.Kind)
-	if kind != coursedomain.KindVideo && kind != coursedomain.KindPodcast && kind != coursedomain.KindStory {
+	if kind != coursedomain.KindVideo && kind != coursedomain.KindPodcast && kind != coursedomain.KindStory && kind != coursedomain.KindMusic {
 		return nil, apperr.ErrBadRequest
 	}
 	// Stories are text-first graded readers: no media URL required.
@@ -593,17 +598,23 @@ func (s *Service) ImportMedia(ctx context.Context, in ImportMediaInput) (*course
 		lang = "en"
 	}
 	payload, err := json.Marshal(map[string]any{
-		"title":       strings.TrimSpace(in.Title),
-		"language":    lang,
-		"level":       strings.TrimSpace(in.CEFR),
-		"url":         strings.TrimSpace(in.URL),
-		"cover":       strings.TrimSpace(in.Cover),
-		"transcript":  in.Transcript,
-		"source_id":   strings.TrimSpace(in.SourceID),
-		"source_url":  strings.TrimSpace(in.SourceURL),
-		"attribution": rawOrNil(in.Attribution),
-		"license":     rawOrNil(in.License),
-		"published":   false,
+		"title":            strings.TrimSpace(in.Title),
+		"artist":           strings.TrimSpace(in.Artist),
+		"audio_language":   strings.TrimSpace(in.AudioLanguage),
+		"media_kind":       kind,
+		"rights_reference": strings.TrimSpace(in.RightsReference),
+		"rights_approved":  in.RightsApproved,
+		"language":         lang,
+		"level":            strings.TrimSpace(in.CEFR),
+		"level_verified":   in.LevelVerified,
+		"url":              strings.TrimSpace(in.URL),
+		"cover":            strings.TrimSpace(in.Cover),
+		"transcript":       in.Transcript,
+		"source_id":        strings.TrimSpace(in.SourceID),
+		"source_url":       strings.TrimSpace(in.SourceURL),
+		"attribution":      rawOrNil(in.Attribution),
+		"license":          rawOrNil(in.License),
+		"published":        false,
 	})
 	if err != nil {
 		return nil, err
@@ -672,8 +683,15 @@ func (s *Service) UpdateMedia(ctx context.Context, itemID string, in ImportMedia
 		}
 	}
 	payloadMap["title"] = strings.TrimSpace(in.Title)
+	payloadMap["artist"] = strings.TrimSpace(in.Artist)
+	payloadMap["audio_language"] = strings.TrimSpace(in.AudioLanguage)
+	if existing.Kind == coursedomain.KindMusic || existing.Kind == coursedomain.KindVideo {
+		payloadMap["rights_reference"] = strings.TrimSpace(in.RightsReference)
+		payloadMap["rights_approved"] = in.RightsApproved
+	}
 	payloadMap["language"] = lang
 	payloadMap["level"] = strings.TrimSpace(in.CEFR)
+	payloadMap["level_verified"] = in.LevelVerified
 	payloadMap["url"] = strings.TrimSpace(in.URL)
 	newCover := strings.TrimSpace(in.Cover)
 	oldCover, _ := payloadMap["cover"].(string)
@@ -792,7 +810,7 @@ func (s *Service) AdminMedia(ctx context.Context, kind string) ([]coursedomain.L
 						return nil, e
 					}
 					for _, it := range all {
-						if !seen[it.ID] && (kind == "" || it.Kind == kind) && (it.Kind == coursedomain.KindStory || it.Kind == coursedomain.KindPodcast || it.Kind == coursedomain.KindVideo) {
+						if !seen[it.ID] && (kind == "" || it.Kind == kind) && (it.Kind == coursedomain.KindStory || it.Kind == coursedomain.KindPodcast || it.Kind == coursedomain.KindVideo || it.Kind == coursedomain.KindMusic) {
 							items = append(items, it)
 							seen[it.ID] = true
 						}

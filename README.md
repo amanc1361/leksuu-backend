@@ -196,8 +196,10 @@ partitions; the worker will create monthly partitions ahead of time.
 
 ## Seeding & admin access
 
-A fresh database starts empty. `make seed` (and `docker compose up`, where the
-migrate step runs `migrate seed`) loads:
+A fresh database starts empty. `make seed` or
+`docker compose run --rm migrate migrate seed` explicitly loads the demo seed
+data into a disposable database. Normal `docker compose up` applies migrations
+without seeding existing records. The seed loads:
 
 - a starter **English A1** course, and
 - a default **admin account** so the panel works immediately.

@@ -12,6 +12,8 @@ import (
 
 // ErrNotFound is returned by Reader.Get when the key holds no object.
 var ErrNotFound = errors.New("media: object not found")
+var ErrMultipartTicket = errors.New("media: invalid multipart ticket")
+var ErrMultipartIncomplete = errors.New("media: multipart upload incomplete")
 
 // Store persists an object under a key and returns its public URL.
 type Store interface {
@@ -49,4 +51,14 @@ type Lookup interface {
 	// Stat returns the stored content type, or ErrNotFound.
 	Stat(ctx context.Context, key string) (contentType string, err error)
 	URL(key string) string
+}
+
+// MultipartStore stages large objects directly in an S3-compatible store.
+// The opaque ticket is bound to an administrator and survives API restarts.
+type MultipartStore interface {
+	BeginMultipart(ctx context.Context, subject, contentType string, size int64, protected bool) (ticket string, partSize int64, err error)
+	MultipartPartURL(ctx context.Context, ticket, subject string, partNumber int) (string, error)
+	MultipartParts(ctx context.Context, ticket, subject string) ([]int, error)
+	CompleteMultipart(ctx context.Context, ticket, subject string, partSHA256 []string) (key, url, sha256 string, err error)
+	AbortMultipart(ctx context.Context, ticket, subject string) error
 }

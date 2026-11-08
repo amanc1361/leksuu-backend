@@ -264,7 +264,7 @@ func (h *Handler) MediaLibrary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	kind := r.URL.Query().Get("type")
-	if kind != domain.KindStory && kind != domain.KindPodcast && kind != domain.KindVideo {
+	if kind != domain.KindStory && kind != domain.KindPodcast && kind != domain.KindVideo && kind != domain.KindMusic {
 		web.Error(w, r, apperr.ErrBadRequest)
 		return
 	}

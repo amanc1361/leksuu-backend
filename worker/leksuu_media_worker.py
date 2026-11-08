@@ -20,6 +20,8 @@ import urllib.request
 import uuid
 from pathlib import Path
 
+from hls_pipeline import run_ffmpeg, upload_hls
+
 sys.path.insert(0, str(Path(tempfile.gettempdir()) / "leksuu-align-pydeps"))
 import av  # noqa: E402
 import psycopg  # noqa: E402
@@ -127,6 +129,10 @@ def event(connection, job_id, name, **details):
 
 def claim(worker_id):
     with db() as connection:
+        connection.execute("UPDATE media_processing_jobs SET status='failed',worker_id=NULL,lease_until=NULL,"
+                           "error_code='worker_interrupted_retry_exhausted',updated_at=now(),"
+                           "events=events||'[{\"event\":\"worker_interrupted_retry_exhausted\"}]'::jsonb "
+                           "WHERE status='running' AND lease_until<now() AND attempts>=3")
         connection.execute("UPDATE media_processing_jobs SET status='pending',worker_id=NULL,lease_until=NULL,"
                            "events=events||'[{\"event\":\"worker_interrupted\"}]'::jsonb "
                            "WHERE status='running' AND lease_until<now() AND attempts<3")
@@ -170,23 +176,36 @@ def fetch_original(url, folder):
     path = parsed.path if parsed.scheme else url
     if not path.startswith("/media/") or ".." in path.split("/"):
         raise ValueError("media_url_not_local_asset")
-    request = urllib.request.Request(base + path, headers={"User-Agent": "LeksuuMediaWorker/1"})
+    key = path.removeprefix("/media/")
     media = Path(folder) / ("original" + (Path(path).suffix or ".bin"))
     maximum = int(os.environ.get("MEDIA_JOBS_MAX_BYTES", str(2 << 30)))
     if maximum <= 0:
         raise ValueError("invalid_media_size_limit")
     digest = hashlib.sha256()
     size = 0
-    with urllib.request.urlopen(request, timeout=60) as response:
-        if response.status != 200:
-            raise ValueError("media_download_failed")
-        with media.open("wb") as destination:
-            while chunk := response.read(1 << 20):
-                size += len(chunk)
-                if size > maximum:
-                    raise ValueError("media_too_large")
-                digest.update(chunk)
-                destination.write(chunk)
+    if os.environ.get("S3_BUCKET"):
+        import boto3
+        endpoint = os.environ.get("S3_ENDPOINT", "")
+        if endpoint and not endpoint.startswith(("https://", "http://")):
+            endpoint = ("https://" if os.environ.get("S3_SECURE", "true") == "true" else "http://") + endpoint
+        client = boto3.client("s3", endpoint_url=endpoint or None,
+                              region_name=os.environ.get("S3_REGION", "us-east-1"),
+                              aws_access_key_id=os.environ["S3_ACCESS_KEY"],
+                              aws_secret_access_key=os.environ["S3_SECRET_KEY"])
+        stored_key = "/".join(part for part in (os.environ.get("S3_PREFIX", "").strip("/"), key) if part)
+        source = client.get_object(Bucket=os.environ["S3_BUCKET"], Key=stored_key)["Body"]
+    elif os.environ.get("MEDIA_JOBS_LOCAL_MEDIA_DIR"):
+        source = (Path(os.environ["MEDIA_JOBS_LOCAL_MEDIA_DIR"]) / key).open("rb")
+    else:
+        request = urllib.request.Request(base + path, headers={"User-Agent": "LeksuuMediaWorker/1"})
+        source = urllib.request.urlopen(request, timeout=60)
+    with source, media.open("wb") as destination:
+        while chunk := source.read(1 << 20):
+            size += len(chunk)
+            if size > maximum:
+                raise ValueError("media_too_large")
+            digest.update(chunk)
+            destination.write(chunk)
     if not size:
         raise ValueError("media_empty")
     return media, digest.hexdigest()
@@ -421,6 +440,20 @@ def process(job):
             raise ValueError("source_changed_since_queue")
     if job["operation"] == "translate":
         return process_translation(job, current["payload"])
+    if job["operation"] == "transcode":
+        if current["payload"] != payload or job["kind"] not in ("video", "music"):
+            raise ValueError("source_changed_since_queue")
+        with tempfile.TemporaryDirectory(prefix="leksuu-hls-") as folder:
+            media, digest = fetch_original(payload.get("url", ""), folder)
+            expected = payload.get("audio_sha256") or payload.get("media_sha256")
+            if expected and digest.lower() != expected.lower():
+                raise ValueError("media_checksum_mismatch")
+            output = Path(folder) / "hls"
+            details = run_ffmpeg(media, output)
+            prefix = "hls/" + str(job["item_id"]) + "/" + job["payload_sha256"][:16]
+            manifest = upload_hls(output, prefix)
+            return {"hls_manifest_key": manifest, "source_sha256": digest,
+                    "profiles": details["profiles"], "duration_seconds": details["duration_seconds"]}
     if job["operation"] != "synchronize" or current["payload"] != payload:
         raise ValueError("source_changed_since_queue")
     with tempfile.TemporaryDirectory(prefix="leksuu-job-") as folder:
@@ -547,6 +580,18 @@ def finish(job_id, worker_id, result=None, error=None):
                     next_status = "review" if unresolved else "ready"
                 except ValueError as exc:
                     next_status, error = "failed", str(exc)
+            elif row["operation"] == "transcode":
+                source = row["payload_snapshot"]
+                current = connection.execute("SELECT payload FROM lesson_items WHERE id=%s FOR UPDATE", (row["item_id"],)).fetchone()
+                if not current or current["payload"] != source:
+                    next_status, error = "failed", "source_changed_since_queue"
+                else:
+                    updated = dict(source)
+                    updated["hls_manifest_key"] = result["hls_manifest_key"]
+                    updated["hls_status"] = "ready"
+                    connection.execute("UPDATE lesson_items SET payload=%s WHERE id=%s AND payload=%s",
+                                       (Jsonb(updated), row["item_id"], Jsonb(source)))
+                    next_status = "ready"
         connection.execute("""UPDATE media_processing_jobs SET status=%s,progress=%s,result=coalesce(%s,result),
             error_code=%s,lease_until=NULL,worker_id=NULL,updated_at=now()
             WHERE id=%s AND worker_id=%s""", (next_status, 100 if next_status in ("review", "ready") else 0,

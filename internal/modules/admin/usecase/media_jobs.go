@@ -31,6 +31,27 @@ var ErrMediaJobConflict = coursedomain.ErrMediaJobConflict
 
 func (s *Service) SetMediaJobs(store MediaJobStore) { s.mediaJobs = store }
 
+func (s *Service) EnqueueTranscodeJob(ctx context.Context, itemID string) (*MediaProcessingJob, error) {
+	if s.mediaJobs == nil {
+		return nil, ErrMediaJobsUnavailable
+	}
+	item, err := s.findMediaItem(ctx, itemID)
+	if err != nil {
+		return nil, err
+	}
+	if item.Kind != coursedomain.KindVideo && item.Kind != coursedomain.KindMusic {
+		return nil, apperr.ErrBadRequest
+	}
+	var payload struct {
+		URL string `json:"url"`
+	}
+	if json.Unmarshal(item.Payload, &payload) != nil || !strings.Contains(payload.URL, "/media/") {
+		return nil, apperr.ErrBadRequest
+	}
+	hash := sha256.Sum256(item.Payload)
+	return s.mediaJobs.Enqueue(ctx, item.ID, item.Kind, "transcode", "", hex.EncodeToString(hash[:]), item.Payload)
+}
+
 func (s *Service) EnqueueMediaJob(ctx context.Context, itemID string) (*MediaProcessingJob, error) {
 	if s.mediaJobs == nil {
 		return nil, ErrMediaJobsUnavailable
@@ -39,7 +60,7 @@ func (s *Service) EnqueueMediaJob(ctx context.Context, itemID string) (*MediaPro
 	if err != nil {
 		return nil, err
 	}
-	if item.Kind != coursedomain.KindStory && item.Kind != coursedomain.KindPodcast && item.Kind != coursedomain.KindVideo {
+	if item.Kind != coursedomain.KindStory && item.Kind != coursedomain.KindPodcast && item.Kind != coursedomain.KindVideo && item.Kind != coursedomain.KindMusic {
 		return nil, apperr.ErrBadRequest
 	}
 	var payload struct {
@@ -173,7 +194,7 @@ func (s *Service) EnqueueTranslationJob(ctx context.Context, itemID, targetLangu
 	if err != nil {
 		return nil, err
 	}
-	if item.Kind != coursedomain.KindStory && item.Kind != coursedomain.KindPodcast && item.Kind != coursedomain.KindVideo {
+	if item.Kind != coursedomain.KindStory && item.Kind != coursedomain.KindPodcast && item.Kind != coursedomain.KindVideo && item.Kind != coursedomain.KindMusic {
 		return nil, apperr.ErrBadRequest
 	}
 	var payload struct {

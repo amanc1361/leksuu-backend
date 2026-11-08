@@ -107,6 +107,100 @@ func TestImportMediaCreatesLibraryItemInHiddenBucket(t *testing.T) {
 	}
 }
 
+func TestMusicImportStaysDraftAndKeepsCueIdentity(t *testing.T) {
+	repo := courserepo.NewMemoryCourseRepo()
+	svc := NewService(repo, nil)
+	start, end := 1.0, 2.0
+	item, err := svc.ImportMedia(context.Background(), ImportMediaInput{
+		Kind: "music", Title: "Authorized recording", Artist: "Example artist", Language: "de", AudioLanguage: "de",
+		URL:        "https://example.invalid/song.mp3",
+		Transcript: []MediaCue{{CueID: "source-cue-1", Start: &start, End: &end, Text: "Guten Morgen", TimingStatus: "verified"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if item.Kind != "music" {
+		t.Fatalf("kind=%s", item.Kind)
+	}
+	var payload struct {
+		Artist     string     `json:"artist"`
+		Transcript []MediaCue `json:"transcript"`
+		Published  bool       `json:"published"`
+	}
+	if err := json.Unmarshal(item.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Published || payload.Artist != "Example artist" || payload.Transcript[0].CueID != "source-cue-1" {
+		t.Fatalf("music draft or cue identity lost: %+v", payload)
+	}
+	_, total, err := repo.MediaItems(context.Background(), "music", "de", 10, 0)
+	if err != nil || total != 0 {
+		t.Fatalf("draft leaked: %v, %d", err, total)
+	}
+	if _, err := svc.SetMediaPublished(context.Background(), item.ID, true); err == nil {
+		t.Fatal("music without rights review was published")
+	}
+}
+
+func TestMusicPublicationRequiresReviewedRightsAndTiming(t *testing.T) {
+	repo := courserepo.NewMemoryCourseRepo()
+	svc := NewService(repo, nil)
+	start, end := 1.0, 2.0
+	base := ImportMediaInput{Kind: "music", Title: "Song", Language: "de", URL: "https://example.invalid/song.mp3",
+		RightsApproved: true, RightsReference: "licensed-fixture", Transcript: []MediaCue{{CueID: "one", Start: &start, End: &end, Text: "Guten Morgen", TimingStatus: "verified"}}}
+	item, err := svc.ImportMedia(context.Background(), base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SetMediaPublished(context.Background(), item.ID, true); err == nil {
+		t.Fatal("music without HLS and cue approvals was published")
+	}
+	var reviewed map[string]any
+	if err := json.Unmarshal(item.Payload, &reviewed); err != nil {
+		t.Fatal(err)
+	}
+	reviewed["hls_manifest_key"] = "hls/fixture/master.m3u8"
+	cues := reviewed["transcript"].([]any)
+	cue := cues[0].(map[string]any)
+	cue["timing_status"] = "approved"
+	cue["editorial_review"] = map[string]any{"decision": "approved"}
+	cue["translation"] = map[string]any{"fa": "صبح بخیر", "ckb": "بەیانی باش"}
+	cue["translation_review"] = map[string]any{"fa": "approved", "ckb": "approved"}
+	cue["exercise_review"] = "approved"
+	item.Payload, err = json.Marshal(reviewed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpdateItem(context.Background(), item); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SetMediaPublished(context.Background(), item.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	base.Transcript[0].TimingStatus = "draft"
+	item, err = svc.ImportMedia(context.Background(), base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SetMediaPublished(context.Background(), item.ID, true); err == nil {
+		t.Fatal("unverified lyric timing was published")
+	}
+}
+
+func TestNewFilmPublicationRequiresRightsReview(t *testing.T) {
+	repo := courserepo.NewMemoryCourseRepo()
+	svc := NewService(repo, nil)
+	start, end := 0.0, 2.0
+	item, err := svc.ImportMedia(context.Background(), ImportMediaInput{Kind: "video", Title: "Film", Language: "de", URL: "https://example.invalid/film.mp4",
+		Transcript: []MediaCue{{CueID: "film-cue", Start: &start, End: &end, Text: "Guten Tag", TimingStatus: "verified"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SetMediaPublished(context.Background(), item.ID, true); err == nil {
+		t.Fatal("film published without rights")
+	}
+}
+
 func TestImportMediaRejectsBadInput(t *testing.T) {
 	svc := NewService(courserepo.NewMemoryCourseRepo(), nil)
 	ctx := context.Background()

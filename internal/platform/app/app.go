@@ -5,13 +5,18 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	classroomdomain "github.com/leksuu/platform/internal/modules/classroom/domain"
 	tutordomain "github.com/leksuu/platform/internal/modules/tutor/domain"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
+	"path"
+	"strings"
 	"syscall"
 	"time"
 
@@ -27,11 +32,13 @@ import (
 	classroom "github.com/leksuu/platform/internal/modules/classroom"
 	classroomusecase "github.com/leksuu/platform/internal/modules/classroom/usecase"
 	course "github.com/leksuu/platform/internal/modules/course"
+	coursedomain "github.com/leksuu/platform/internal/modules/course/domain"
 	courseusecase "github.com/leksuu/platform/internal/modules/course/usecase"
 	dictionary "github.com/leksuu/platform/internal/modules/dictionary"
 	gamification "github.com/leksuu/platform/internal/modules/gamification"
 	gamificationusecase "github.com/leksuu/platform/internal/modules/gamification/usecase"
 	media "github.com/leksuu/platform/internal/modules/media"
+	mediarest "github.com/leksuu/platform/internal/modules/media/rest"
 	"github.com/leksuu/platform/internal/modules/minimalpairs"
 	minimalpairsrepo "github.com/leksuu/platform/internal/modules/minimalpairs/repo"
 	notification "github.com/leksuu/platform/internal/modules/notification"
@@ -233,9 +240,78 @@ func New(cfg config.Config) (*App, error) {
 	}
 
 	mediaModule := media.New(media.Deps{
-		Store:    mediaStore,
-		Guard:    authModule.Authenticator(),
-		MaxBytes: cfg.MediaMaxBytes,
+		Store:          mediaStore,
+		Guard:          authModule.Authenticator(),
+		MaxBytes:       cfg.MediaMaxBytes,
+		PlaybackSecret: func() []byte { key := sha256.Sum256([]byte("leksuu-playback-v1:" + cfg.JWTSecret)); return key[:] }(),
+		PlaybackBase: func() string {
+			if cfg.MediaCDNBaseURL != "" {
+				return cfg.MediaCDNBaseURL
+			}
+			return cfg.MediaPublicURL
+		}(),
+		PlaybackCDN: cfg.MediaCDNBaseURL != "",
+		KeyOwnership: func(ctx context.Context, key string) (bool, error) {
+			lookup, ok := repos.courses.(interface {
+				ProtectedMediaKey(context.Context, string) (bool, error)
+			})
+			if !ok {
+				return false, errors.New("media ownership unavailable")
+			}
+			return lookup.ProtectedMediaKey(ctx, key)
+		},
+		PlaybackAccess: func(ctx context.Context, userID, itemID string, admin bool) (mediarest.PlaybackAsset, error) {
+			lookup, ok := repos.courses.(interface {
+				PlaybackItem(context.Context, string) (*coursedomain.LessonItem, error)
+				MediaLibraryBucket(context.Context, string) (bool, error)
+			})
+			if !ok {
+				return mediarest.PlaybackAsset{}, errors.New("media lookup unavailable")
+			}
+			item, err := lookup.PlaybackItem(ctx, itemID)
+			if err != nil {
+				return mediarest.PlaybackAsset{}, err
+			}
+			var payload struct {
+				URL            string `json:"url"`
+				Language       string `json:"language"`
+				Published      *bool  `json:"published"`
+				HLSManifestKey string `json:"hls_manifest_key"`
+			}
+			if json.Unmarshal(item.Payload, &payload) != nil {
+				return mediarest.PlaybackAsset{}, errors.New("invalid media payload")
+			}
+			if !admin {
+				if payload.Published != nil && !*payload.Published {
+					return mediarest.PlaybackAsset{}, errors.New("unpublished media")
+				}
+				profile, err := authModule.Service().Profile(ctx, userID)
+				if err != nil || payload.Language == "" || profile.TargetLang != payload.Language {
+					return mediarest.PlaybackAsset{}, errors.New("wrong learning language")
+				}
+				if err := billingModule.Service().RequirePremium(ctx, userID); err != nil {
+					return mediarest.PlaybackAsset{}, err
+				}
+			}
+			bucket, err := lookup.MediaLibraryBucket(ctx, item.ID)
+			if err != nil {
+				return mediarest.PlaybackAsset{}, err
+			}
+			if !bucket {
+				lesson, err := courseModule.Service().GetLesson(ctx, courseusecase.Viewer{UserID: userID, Admin: admin}, item.LessonID)
+				if err != nil || lesson.Locked {
+					return mediarest.PlaybackAsset{}, errors.New("lesson unavailable")
+				}
+			}
+			if payload.HLSManifestKey != "" && strings.HasPrefix(payload.HLSManifestKey, "hls/") && path.Base(payload.HLSManifestKey) == "master.m3u8" {
+				return mediarest.PlaybackAsset{Key: path.Dir(payload.HLSManifestKey), HLS: true}, nil
+			}
+			u, err := url.Parse(payload.URL)
+			if err != nil || !strings.HasPrefix(u.Path, "/media/") {
+				return mediarest.PlaybackAsset{}, errors.New("media URL is not private storage")
+			}
+			return mediarest.PlaybackAsset{Key: strings.TrimPrefix(u.Path, "/media/")}, nil
+		},
 	})
 
 	srsModule := srs.New(srs.Deps{

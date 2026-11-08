@@ -6,6 +6,7 @@ import (
 	"context"
 	"mime"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -60,7 +61,7 @@ func (l *Local) Put(_ context.Context, key, _ string, data []byte) (string, erro
 
 // URL is where a stored key is served from.
 func (l *Local) URL(key string) string {
-	return l.baseURL + "/media/" + strings.TrimPrefix(filepath.Clean("/"+key), "/")
+	return l.baseURL + "/media/" + strings.TrimPrefix(path.Clean("/"+key), "/")
 }
 
 // Stat reports whether the key already holds a file.
