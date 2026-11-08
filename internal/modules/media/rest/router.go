@@ -1,9 +1,12 @@
 package rest
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"path"
+	"strconv"
+	"strings"
 
 	"github.com/leksuu/platform/internal/modules/media/domain"
 )
@@ -21,17 +24,65 @@ type Guard interface {
 // its objects are fetched straight from the bucket or CDN.
 func (h *Handler) Mount(mux *http.ServeMux, prefix string, guard Guard, store domain.Store) {
 	mux.Handle("POST "+prefix+"/media", guard.RequireRole("admin", http.HandlerFunc(h.Upload)))
+	mux.Handle("GET "+prefix+"/admin/media-preview", guard.RequireRole("admin", http.HandlerFunc(h.AdminPreviewGrant)))
+	if h.multipart != nil {
+		mux.Handle("POST "+prefix+"/media/multipart", guard.RequireRole("admin", http.HandlerFunc(h.BeginMultipart)))
+		mux.Handle("POST "+prefix+"/media/multipart/part", guard.RequireRole("admin", http.HandlerFunc(h.MultipartPart)))
+		mux.Handle("POST "+prefix+"/media/multipart/status", guard.RequireRole("admin", http.HandlerFunc(h.MultipartStatus)))
+		mux.Handle("POST "+prefix+"/media/multipart/complete", guard.RequireRole("admin", http.HandlerFunc(h.CompleteMultipart)))
+		mux.Handle("POST "+prefix+"/media/multipart/abort", guard.RequireRole("admin", http.HandlerFunc(h.AbortMultipart)))
+	}
 	mux.Handle("POST "+prefix+"/media/remote", guard.RequireRole("admin", http.HandlerFunc(h.ImportRemote)))
 	mux.Handle("POST "+prefix+"/admin/course-import-sources", guard.RequireRole("admin", http.HandlerFunc(h.ArchiveCourseImport)))
 	mux.Handle("POST "+prefix+"/media/avatar", guard.Require(http.HandlerFunc(h.UploadAvatar)))
 
+	// Playback credentials are issued only after the learner's entitlement has
+	// been checked. The same credential is required on every HLS child request.
+	mux.Handle("GET "+prefix+"/media-playback/{item}", guard.Require(http.HandlerFunc(h.PlaybackGrant)))
 	switch s := store.(type) {
 	case domain.LocalDir:
 		fs := http.StripPrefix("/media/", http.FileServer(http.Dir(s.Dir())))
-		mux.Handle("GET /media/{file...}", inert(longCache(fs)))
+		mux.Handle("GET /media/{file...}", inert(longCache(h.authorizeBytes(fs))))
 	case domain.Reader:
-		mux.Handle("GET /media/{file...}", inert(longCache(serveBlob(s))))
+		mux.Handle("GET /media/{file...}", inert(longCache(h.authorizeBytes(serveBlob(s)))))
 	}
+}
+
+// KeyOwnership resolves existing Film/Music assets, including old random keys.
+// Unknown keys under protected storage prefixes fail closed.
+type KeyOwnership func(context.Context, string) (bool, error)
+
+func (h *Handler) authorizeBytes(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key := r.PathValue("file")
+		protected := strings.HasPrefix(key, "hls/") || strings.HasPrefix(key, "protected/")
+		if !protected && h.keyOwnership != nil {
+			owned, err := h.keyOwnership(r.Context(), key)
+			if err != nil {
+				w.Header().Set("Cache-Control", "no-store")
+				http.Error(w, "media unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			protected = protected || owned
+		}
+		if protected {
+			if !h.validPlaybackTicket(r.URL.Query().Get("playback"), key) {
+				w.Header().Set("Cache-Control", "no-store")
+				http.Error(w, "playback authorization required", http.StatusForbidden)
+				return
+			}
+			if h.playbackCDN && strings.HasSuffix(strings.ToLower(key), ".ts") {
+				w.Header().Set("Cache-Control", "public, max-age=0, s-maxage="+strconv.Itoa(playbackCacheSeconds(r.URL.Query().Get("playback"))))
+			} else {
+				w.Header().Set("Cache-Control", "private, max-age=0, no-store")
+			}
+			if strings.HasSuffix(strings.ToLower(key), ".m3u8") {
+				h.servePlaylist(w, r, key)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // serveBlob streams an object out of a private bucket. http.ServeContent does

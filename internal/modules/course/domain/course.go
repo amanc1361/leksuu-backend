@@ -20,6 +20,7 @@ const (
 	KindImage        = "image"
 	KindAudio        = "audio"
 	KindVideo        = "video"
+	KindMusic        = "music"
 	KindExercise     = "exercise"
 	KindSpeaking     = "speaking"
 	KindDialogue     = "dialogue"

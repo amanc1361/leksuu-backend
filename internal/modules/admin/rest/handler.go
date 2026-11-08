@@ -634,24 +634,29 @@ func (h *Handler) AccessRules(w http.ResponseWriter, r *http.Request) {
 // in one request — no course/unit/lesson navigation. POST /admin/media.
 func (h *Handler) ImportMedia(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Kind        string             `json:"kind"`
-		Title       string             `json:"title"`
-		Language    string             `json:"language"`
-		CEFR        string             `json:"cefr"`
-		URL         string             `json:"url"`
-		Cover       string             `json:"cover"`
-		Transcript  []usecase.MediaCue `json:"transcript"`
-		SourceID    string             `json:"source_id"`
-		SourceURL   string             `json:"source_url"`
-		Attribution json.RawMessage    `json:"attribution"`
-		License     json.RawMessage    `json:"license"`
+		Kind            string             `json:"kind"`
+		Title           string             `json:"title"`
+		Artist          string             `json:"artist"`
+		AudioLanguage   string             `json:"audio_language"`
+		RightsReference string             `json:"rights_reference"`
+		RightsApproved  bool               `json:"rights_approved"`
+		LevelVerified   bool               `json:"level_verified"`
+		Language        string             `json:"language"`
+		CEFR            string             `json:"cefr"`
+		URL             string             `json:"url"`
+		Cover           string             `json:"cover"`
+		Transcript      []usecase.MediaCue `json:"transcript"`
+		SourceID        string             `json:"source_id"`
+		SourceURL       string             `json:"source_url"`
+		Attribution     json.RawMessage    `json:"attribution"`
+		License         json.RawMessage    `json:"license"`
 	}
 	if json.NewDecoder(r.Body).Decode(&in) != nil {
 		web.Error(w, r, apperr.ErrBadRequest)
 		return
 	}
 	it, err := h.svc.ImportMedia(r.Context(), usecase.ImportMediaInput{
-		Kind: in.Kind, Title: in.Title, Language: in.Language, CEFR: in.CEFR, URL: in.URL, Cover: in.Cover, Transcript: in.Transcript,
+		Kind: in.Kind, Title: in.Title, Artist: in.Artist, AudioLanguage: in.AudioLanguage, RightsReference: in.RightsReference, RightsApproved: in.RightsApproved, LevelVerified: in.LevelVerified, Language: in.Language, CEFR: in.CEFR, URL: in.URL, Cover: in.Cover, Transcript: in.Transcript,
 		SourceID: in.SourceID, SourceURL: in.SourceURL, Attribution: in.Attribution, License: in.License,
 	})
 	if err != nil {
@@ -675,23 +680,28 @@ func (h *Handler) ImportMedia(w http.ResponseWriter, r *http.Request) {
 // PATCH /admin/media/{id}.
 func (h *Handler) UpdateMedia(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Title       string             `json:"title"`
-		Language    string             `json:"language"`
-		CEFR        string             `json:"cefr"`
-		URL         string             `json:"url"`
-		Cover       string             `json:"cover"`
-		Transcript  []usecase.MediaCue `json:"transcript"`
-		SourceID    string             `json:"source_id"`
-		SourceURL   string             `json:"source_url"`
-		Attribution json.RawMessage    `json:"attribution"`
-		License     json.RawMessage    `json:"license"`
+		Title           string             `json:"title"`
+		Artist          string             `json:"artist"`
+		AudioLanguage   string             `json:"audio_language"`
+		RightsReference string             `json:"rights_reference"`
+		RightsApproved  bool               `json:"rights_approved"`
+		LevelVerified   bool               `json:"level_verified"`
+		Language        string             `json:"language"`
+		CEFR            string             `json:"cefr"`
+		URL             string             `json:"url"`
+		Cover           string             `json:"cover"`
+		Transcript      []usecase.MediaCue `json:"transcript"`
+		SourceID        string             `json:"source_id"`
+		SourceURL       string             `json:"source_url"`
+		Attribution     json.RawMessage    `json:"attribution"`
+		License         json.RawMessage    `json:"license"`
 	}
 	if json.NewDecoder(r.Body).Decode(&in) != nil {
 		web.Error(w, r, apperr.ErrBadRequest)
 		return
 	}
 	it, err := h.svc.UpdateMedia(r.Context(), r.PathValue("id"), usecase.ImportMediaInput{
-		Title: in.Title, Language: in.Language, CEFR: in.CEFR, URL: in.URL, Cover: in.Cover, Transcript: in.Transcript,
+		Title: in.Title, Artist: in.Artist, AudioLanguage: in.AudioLanguage, RightsReference: in.RightsReference, RightsApproved: in.RightsApproved, LevelVerified: in.LevelVerified, Language: in.Language, CEFR: in.CEFR, URL: in.URL, Cover: in.Cover, Transcript: in.Transcript,
 		SourceID: in.SourceID, SourceURL: in.SourceURL, Attribution: in.Attribution, License: in.License,
 	})
 	if err != nil {

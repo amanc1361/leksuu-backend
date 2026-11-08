@@ -13,9 +13,14 @@ import (
 )
 
 type Deps struct {
-	Store    domain.Store
-	Guard    rest.Guard
-	MaxBytes int64
+	Store          domain.Store
+	Guard          rest.Guard
+	MaxBytes       int64
+	PlaybackSecret []byte
+	PlaybackBase   string
+	PlaybackCDN    bool
+	PlaybackAccess func(context.Context, string, string, bool) (rest.PlaybackAsset, error)
+	KeyOwnership   rest.KeyOwnership
 }
 
 type Module struct {
@@ -25,8 +30,13 @@ type Module struct {
 }
 
 func New(d Deps) *Module {
+	handler := rest.NewHandler(usecase.NewService(d.Store, d.MaxBytes), d.MaxBytes)
+	if multipart, ok := d.Store.(domain.MultipartStore); ok {
+		handler.SetMultipartStore(multipart)
+	}
+	handler.ConfigurePlayback(d.PlaybackSecret, d.PlaybackBase, d.PlaybackCDN, d.PlaybackAccess, d.KeyOwnership, d.Store)
 	return &Module{
-		handler: rest.NewHandler(usecase.NewService(d.Store, d.MaxBytes), d.MaxBytes),
+		handler: handler,
 		guard:   d.Guard,
 		store:   d.Store,
 	}

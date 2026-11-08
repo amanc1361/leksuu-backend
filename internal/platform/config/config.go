@@ -5,6 +5,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -49,6 +50,7 @@ type Config struct {
 	RecordingsDir          string
 	RecordingRetentionDays int
 	MediaPublicURL         string
+	MediaCDNBaseURL        string
 	MediaMaxBytes          int64
 	S3Endpoint             string
 	S3Region               string
@@ -114,6 +116,7 @@ func Load() Config {
 		RecordingsDir:          env("RECORDINGS_DIR", "./recordings-tmp"),
 		RecordingRetentionDays: atoiDefault(env("RECORDING_RETENTION_DAYS", "0")),
 		MediaPublicURL:         env("MEDIA_PUBLIC_URL", "http://localhost:8080"),
+		MediaCDNBaseURL:        env("MEDIA_CDN_BASE_URL", ""),
 		MediaMaxBytes:          int64(atoiDefault(env("MEDIA_MAX_MB", "50"))) * 1024 * 1024,
 		S3Endpoint:             env("S3_ENDPOINT", ""),
 		S3Region:               env("S3_REGION", "us-east-1"),
@@ -157,6 +160,15 @@ var placeholderSecrets = map[string]bool{
 func (c Config) Validate() error {
 	if !c.IsProduction() {
 		return nil
+	}
+	if c.S3PublicRead {
+		return errors.New("config: S3_PUBLIC_READ must be false for licensed Film and Music delivery")
+	}
+	if c.MediaCDNBaseURL != "" {
+		u, err := url.Parse(c.MediaCDNBaseURL)
+		if err != nil || u.Scheme != "https" || u.Host == "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+			return errors.New("config: MEDIA_CDN_BASE_URL must be an https origin with no path or query")
+		}
 	}
 	// A real gateway must send paying users back to this site, not localhost.
 	if strings.EqualFold(c.PaymentProvider, "zarinpal") {

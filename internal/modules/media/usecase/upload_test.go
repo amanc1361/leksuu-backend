@@ -65,3 +65,14 @@ func TestUploadNeverKeepsAnActiveExtension(t *testing.T) {
 		t.Fatal("a non-media type must be rejected")
 	}
 }
+
+func TestLicensedUploadStartsUnderProtectedPrefix(t *testing.T) {
+	svc := newLocalSvc(t)
+	up, err := svc.UploadScoped(context.Background(), "clip.mp4", "video/mp4", []byte("fixture movie"), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(up.Key, "protected/") || !strings.Contains(up.URL, "/media/protected/") {
+		t.Fatalf("licensed source exposed outside protected storage: %+v", up)
+	}
+}

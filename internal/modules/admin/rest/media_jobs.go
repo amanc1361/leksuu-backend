@@ -32,6 +32,12 @@ func (h *Handler) EnqueueMediaJob(w http.ResponseWriter, r *http.Request) {
 		job, err = h.svc.EnqueueMediaJob(r.Context(), in.ItemID)
 	case "translate":
 		job, err = h.svc.EnqueueTranslationJob(r.Context(), in.ItemID, in.TargetLanguage)
+	case "transcode":
+		if in.TargetLanguage != "" {
+			web.Error(w, r, apperr.ErrBadRequest)
+			return
+		}
+		job, err = h.svc.EnqueueTranscodeJob(r.Context(), in.ItemID)
 	default:
 		web.Error(w, r, apperr.ErrBadRequest)
 		return

@@ -72,6 +72,12 @@ var errBadType = apperr.New("media.bad_type", apperr.KindValidation)
 // stored extension follows the validated type, never the client's file name,
 // so an upload can never land on disk as ".html".
 func (s *Service) Upload(ctx context.Context, filename, contentType string, data []byte) (*Uploaded, error) {
+	return s.UploadScoped(ctx, filename, contentType, data, false)
+}
+
+// UploadScoped places licensed Film/Music sources behind playback authorization
+// even before the Admin Media item is created.
+func (s *Service) UploadScoped(ctx context.Context, filename, contentType string, data []byte, protected bool) (*Uploaded, error) {
 	if len(data) == 0 {
 		return nil, apperr.New("media.empty", apperr.KindValidation)
 	}
@@ -82,7 +88,11 @@ func (s *Service) Upload(ctx context.Context, filename, contentType string, data
 	if !allowed(contentType) || activeContent(data) {
 		return nil, errBadType
 	}
-	return s.put(ctx, id.New()+ext(filename, contentType), contentType, data)
+	key := id.New() + ext(filename, contentType)
+	if protected {
+		key = "protected/" + key
+	}
+	return s.put(ctx, key, contentType, data)
 }
 
 // UploadAvatar stores a profile picture. Only real images are accepted, judged

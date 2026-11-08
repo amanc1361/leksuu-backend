@@ -380,7 +380,7 @@ func (r *PostgresCourseRepo) MediaItems(ctx context.Context, kind, language stri
 	if limit <= 0 {
 		limit = 50
 	}
-	const where = `li.kind IN ('podcast','video','story') AND li.payload ? 'transcript'
+	const where = `li.kind IN ('podcast','video','story','music') AND li.payload ? 'transcript'
 		AND COALESCE((li.payload->>'published')::boolean, true)
 		AND (c.title='__media_library__' OR (c.published AND c.language=$2))
 		AND ($1='' OR li.kind=$1) AND li.payload->>'language'=$2`

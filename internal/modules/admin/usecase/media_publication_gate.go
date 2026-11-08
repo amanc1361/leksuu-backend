@@ -2,7 +2,9 @@ package usecase
 
 import (
 	"encoding/json"
+	"path"
 	"reflect"
+	"strings"
 
 	"github.com/leksuu/platform/internal/shared/apperr"
 )
@@ -63,11 +65,41 @@ func guardImportedMutation(existing, replacement json.RawMessage) error {
 
 func guardPublication(existing, replacement json.RawMessage) error {
 	var before, after struct {
-		Published bool            `json:"published"`
-		Review    json.RawMessage `json:"review"`
+		Published       bool            `json:"published"`
+		Review          json.RawMessage `json:"review"`
+		MediaKind       string          `json:"media_kind"`
+		RightsApproved  bool            `json:"rights_approved"`
+		RightsReference string          `json:"rights_reference"`
+		HLSManifestKey  string          `json:"hls_manifest_key"`
+		Transcript      []struct {
+			CueID           string   `json:"cue_id"`
+			Start           *float64 `json:"start"`
+			End             *float64 `json:"end"`
+			TimingStatus    string   `json:"timing_status"`
+			EditorialReview struct {
+				Decision string `json:"decision"`
+			} `json:"editorial_review"`
+			Translation       map[string]string `json:"translation"`
+			TranslationReview map[string]string `json:"translation_review"`
+			ExerciseReview    string            `json:"exercise_review"`
+		} `json:"transcript"`
 	}
 	if json.Unmarshal(existing, &before) != nil || json.Unmarshal(replacement, &after) != nil {
 		return apperr.ErrBadRequest
+	}
+	if !before.Published && after.Published && (before.MediaKind == "music" || before.MediaKind == "video") {
+		if !before.RightsApproved || before.RightsReference == "" || len(before.Transcript) == 0 ||
+			!strings.HasPrefix(before.HLSManifestKey, "hls/") || path.Base(before.HLSManifestKey) != "master.m3u8" {
+			return ErrMediaPublicationReview
+		}
+		for _, cue := range before.Transcript {
+			if cue.CueID == "" || cue.Start == nil || cue.End == nil || *cue.End <= *cue.Start ||
+				cue.TimingStatus != "approved" || cue.EditorialReview.Decision != "approved" ||
+				cue.ExerciseReview != "approved" || cue.TranslationReview["fa"] != "approved" ||
+				cue.TranslationReview["ckb"] != "approved" || cue.Translation["fa"] == "" || cue.Translation["ckb"] == "" {
+				return ErrMediaPublicationReview
+			}
+		}
 	}
 	if !before.Published && after.Published && len(before.Review) > 0 && string(before.Review) != "null" && !publicationAllowed(existing) {
 		return ErrMediaPublicationReview

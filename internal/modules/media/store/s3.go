@@ -32,6 +32,7 @@ type S3 struct {
 	prefix     string
 	publicBase string
 	publicRead bool
+	ticketKey  []byte
 }
 
 func NewS3(endpoint, region, bucket, prefix, accessKey, secretKey, publicBase string, secure, publicRead bool) (*S3, error) {
@@ -49,6 +50,7 @@ func NewS3(endpoint, region, bucket, prefix, accessKey, secretKey, publicBase st
 		prefix:     strings.Trim(strings.TrimSpace(prefix), "/"),
 		publicBase: strings.TrimRight(publicBase, "/"),
 		publicRead: publicRead,
+		ticketKey:  []byte(secretKey),
 	}, nil
 }
 
