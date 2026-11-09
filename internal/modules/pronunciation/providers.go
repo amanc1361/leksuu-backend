@@ -95,6 +95,10 @@ func (p httpScorer) Score(ctx context.Context, in domain.ScoreInput) (*domain.As
 		return nil, fmt.Errorf("pronunciation provider status %d", resp.StatusCode)
 	}
 	var a domain.Assessment
+	var shape map[string]json.RawMessage
+	if json.Unmarshal(data, &shape) != nil || shape["overall"] == nil || string(shape["overall"]) == "null" {
+		return nil, apperr.New("pronunciation.bad_output", apperr.KindValidation)
+	}
 	if err := json.Unmarshal(data, &a); err != nil {
 		return nil, apperr.New("pronunciation.bad_output", apperr.KindValidation)
 	}

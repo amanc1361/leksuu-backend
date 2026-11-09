@@ -39,19 +39,33 @@ type multipartTicket struct {
 
 func multipartExt(contentType string) string {
 	switch contentType {
-	case "video/mp4":
+	case "video/mp4", "video/x-m4v":
 		return ".mp4"
 	case "video/webm":
 		return ".webm"
 	case "video/quicktime":
 		return ".mov"
+	case "video/x-matroska":
+		return ".mkv"
+	case "video/x-msvideo":
+		return ".avi"
+	case "video/mpeg":
+		return ".mpeg"
+	case "video/ogg":
+		return ".ogv"
+	case "audio/aac":
+		return ".aac"
+	case "audio/flac", "audio/x-flac":
+		return ".flac"
+	case "audio/opus":
+		return ".opus"
 	case "audio/mpeg", "audio/mp3":
 		return ".mp3"
 	case "audio/mp4", "audio/x-m4a":
 		return ".m4a"
 	case "audio/ogg":
 		return ".ogg"
-	case "audio/wav", "audio/x-wav":
+	case "audio/wav", "audio/x-wav", "audio/wave":
 		return ".wav"
 	case "audio/webm":
 		return ".webm"

@@ -14,6 +14,21 @@ import (
 
 const htmlFixture = "<!DOCTYPE html><html><body>inert audit fixture</body></html>"
 
+func TestAdditionalMediaFormatsKeepTypedExtension(t *testing.T) {
+	for mime, extension := range map[string]string{"audio/flac": ".flac", "audio/aac": ".aac", "audio/opus": ".opus", "audio/ogg": ".ogg", "video/x-matroska": ".mkv", "video/x-msvideo": ".avi", "video/mpeg": ".mpeg", "video/quicktime": ".mov"} {
+		t.Run(mime, func(t *testing.T) {
+			svc := newLocalSvc(t)
+			up, err := svc.Upload(context.Background(), "original"+extension, mime, []byte("inert container fixture"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if up.ContentType != mime || !strings.HasSuffix(up.Key, extension) {
+				t.Fatalf("unexpected uploaded type/key: %+v", up)
+			}
+		})
+	}
+}
+
 func newLocalSvc(t *testing.T) *Service {
 	st, err := store.NewLocal(t.TempDir(), "https://leksuu.test")
 	if err != nil {

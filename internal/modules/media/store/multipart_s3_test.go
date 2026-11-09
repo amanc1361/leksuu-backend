@@ -10,6 +10,17 @@ import (
 	"time"
 )
 
+func TestAdditionalMultipartContainerFormats(t *testing.T) {
+	for mime, extension := range map[string]string{"audio/flac": ".flac", "audio/x-flac": ".flac", "audio/aac": ".aac", "audio/opus": ".opus", "video/x-matroska": ".mkv", "video/x-msvideo": ".avi", "video/mpeg": ".mpeg", "video/ogg": ".ogv", "audio/wave": ".wav"} {
+		if got := multipartExt(mime); got != extension {
+			t.Errorf("%s stored with %q; want %q", mime, got, extension)
+		}
+	}
+	if multipartExt("text/html") != "" {
+		t.Fatal("non-media multipart input must remain rejected")
+	}
+}
+
 func TestMultipartTicketBindsOwnerAndExpiry(t *testing.T) {
 	s := &S3{ticketKey: []byte("test-secret")}
 	ticket := multipartTicket{Key: "large/fixture.mp4", UploadID: "upload-1", Subject: "admin-1",

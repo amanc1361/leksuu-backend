@@ -354,7 +354,9 @@ var typeExts = map[string]string{
 	"image/svg+xml": ".svg", "image/avif": ".avif",
 	"audio/mpeg": ".mp3", "audio/mp3": ".mp3", "audio/mp4": ".m4a", "audio/x-m4a": ".m4a", "audio/aac": ".aac",
 	"audio/ogg": ".ogg", "audio/webm": ".webm", "audio/wav": ".wav", "audio/x-wav": ".wav", "audio/wave": ".wav",
+	"audio/flac": ".flac", "audio/x-flac": ".flac", "audio/opus": ".opus",
 	"video/mp4": ".mp4", "video/webm": ".webm", "video/ogg": ".ogv", "video/quicktime": ".mov",
+	"video/x-matroska": ".mkv", "video/x-msvideo": ".avi", "video/mpeg": ".mpeg", "video/x-m4v": ".mp4",
 }
 
 // ext picks the stored extension from the validated content type. The client's

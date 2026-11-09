@@ -2,10 +2,28 @@ package pronunciation
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/leksuu/platform/internal/modules/pronunciation/domain"
 )
+
+func TestHTTPScorerRequiresExplicitOverall(t *testing.T) {
+	for _, body := range []string{`{}`, `{"overall":null}`, `{"transcript":"hello"}`} {
+		t.Run(body, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(body))
+			}))
+			defer server.Close()
+			scorer := httpScorer{url: server.URL, client: server.Client()}
+			if _, err := scorer.Score(context.Background(), domain.ScoreInput{Expected: "hello", Audio: []byte{1}}); err == nil {
+				t.Fatal("missing score must not become a zero-valued assessment")
+			}
+		})
+	}
+}
 
 func TestStubScorerDeterministicAndShaped(t *testing.T) {
 	s := stubScorer{}
