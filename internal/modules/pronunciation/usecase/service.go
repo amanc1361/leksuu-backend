@@ -27,6 +27,8 @@ const GoodScore = 85
 
 const goodReward = 3
 
+var ErrScoringUnavailable = apperr.New("pronunciation.unavailable", apperr.KindConflict)
+
 type Service struct {
 	scorer   Scorer
 	repo     domain.Repository
@@ -37,7 +39,15 @@ func NewService(s Scorer, repo domain.Repository, rewarder Rewarder) *Service {
 	return &Service{scorer: s, repo: repo, rewarder: rewarder}
 }
 
-func (s *Service) ProviderName() string { return s.scorer.Name() }
+func (s *Service) ProviderName() string {
+	if s.scorer == nil {
+		return ""
+	}
+	return s.scorer.Name()
+}
+func (s *Service) Available() bool {
+	return s.scorer != nil && s.scorer.Name() != "stub" && s.scorer.Name() != ""
+}
 
 // Score assesses a recording and (when an item is given) persists the result,
 // keeping the best score per line and awarding XP the first time a line is
@@ -47,12 +57,35 @@ func (s *Service) Score(ctx context.Context, userID, itemID string, line int, in
 	if strings.TrimSpace(in.Expected) == "" || len(in.Audio) == 0 {
 		return nil, nil, apperr.ErrBadRequest
 	}
+	// A text-derived demo value is never a measurement of the user's voice.
+	// Preserve existing history, but do not add fake scores or grant rewards.
+	if !s.Available() {
+		return nil, nil, ErrScoringUnavailable
+	}
 	if in.Lang == "" {
 		in.Lang = "en"
 	}
 	a, err := s.scorer.Score(ctx, in)
 	if err != nil {
 		return nil, nil, err
+	}
+	if a == nil || a.Overall < 0 || a.Overall > 100 || len(a.Words) > 1000 || len(a.Feedback) > 24 {
+		return nil, nil, apperr.New("pronunciation.bad_output", apperr.KindValidation)
+	}
+	for _, word := range a.Words {
+		if word.Score < 0 || word.Score > 100 {
+			return nil, nil, apperr.New("pronunciation.bad_output", apperr.KindValidation)
+		}
+	}
+	for _, value := range []*int{a.Accuracy, a.Fluency, a.Prosody, a.Rhythm, a.Pauses} {
+		if value != nil && (*value < 0 || *value > 100) {
+			return nil, nil, apperr.New("pronunciation.bad_output", apperr.KindValidation)
+		}
+	}
+	for _, feedback := range a.Feedback {
+		if len(feedback.Message) > 2000 || len(feedback.Word) > 200 || len(feedback.Dimension) > 80 {
+			return nil, nil, apperr.New("pronunciation.bad_output", apperr.KindValidation)
+		}
 	}
 	if s.repo == nil || itemID == "" {
 		return a, nil, nil

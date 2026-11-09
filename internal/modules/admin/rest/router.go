@@ -53,6 +53,7 @@ func (h *Handler) Mount(mux *http.ServeMux, prefix string, guard Guard) {
 	mux.Handle("POST "+prefix+"/admin/processing/jobs/{id}/approve", admin(h.ApproveMediaJob))
 	mux.Handle("PATCH "+prefix+"/admin/processing/jobs/{id}/cue", admin(h.ReviseMediaJobCue))
 	mux.Handle("PATCH "+prefix+"/admin/media/{id}", admin(h.UpdateMedia))
+	mux.Handle("PUT "+prefix+"/admin/media/{id}/listening-questions", admin(h.SavePodcastQuestions))
 	mux.Handle("PATCH "+prefix+"/admin/media/{id}/cues", admin(h.ReviewMediaCue))
 	mux.Handle("PATCH "+prefix+"/admin/media/{id}/publication", admin(h.SetMediaPublication))
 	mux.Handle("POST "+prefix+"/admin/media/{id}/publication-review", admin(h.ReviewMediaPublication))

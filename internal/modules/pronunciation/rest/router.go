@@ -16,6 +16,7 @@ type Premium interface {
 
 func (h *Handler) Mount(mux *http.ServeMux, prefix string, guard Guard) {
 	mux.Handle("POST "+prefix+"/pronunciation/score", guard.Require(http.HandlerFunc(h.Score)))
+	mux.Handle("GET "+prefix+"/pronunciation/capabilities", guard.Require(http.HandlerFunc(h.Capabilities)))
 	mux.Handle("GET "+prefix+"/pronunciation/scores", guard.Require(http.HandlerFunc(h.Scores)))
 	mux.Handle("GET "+prefix+"/pronunciation/summary", guard.Require(http.HandlerFunc(h.Summary)))
 }

@@ -13,6 +13,18 @@ type Assessment struct {
 	Overall    int         `json:"overall"` // 0..100
 	Transcript string      `json:"transcript"`
 	Words      []WordScore `json:"words"`
+	Accuracy   *int        `json:"accuracy,omitempty"`
+	Fluency    *int        `json:"fluency,omitempty"`
+	Prosody    *int        `json:"prosody,omitempty"`
+	Rhythm     *int        `json:"rhythm,omitempty"`
+	Pauses     *int        `json:"pauses,omitempty"`
+	Feedback   []Feedback  `json:"feedback,omitempty"`
+}
+
+type Feedback struct {
+	Dimension string `json:"dimension"`
+	Message   string `json:"message"`
+	Word      string `json:"word,omitempty"`
 }
 
 // ScoreInput is one recording to assess against the expected phrase.

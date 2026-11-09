@@ -9,6 +9,44 @@ import (
 
 type fakeScorer struct{}
 
+type unavailableScorer struct{}
+
+func (unavailableScorer) Name() string { return "stub" }
+func (unavailableScorer) Score(context.Context, domain.ScoreInput) (*domain.Assessment, error) {
+	panic("demo scorer must never be called for learner assessments")
+}
+
+type invalidScorer struct{ assessment *domain.Assessment }
+
+func (invalidScorer) Name() string { return "http" }
+func (s invalidScorer) Score(context.Context, domain.ScoreInput) (*domain.Assessment, error) {
+	return s.assessment, nil
+}
+
+func TestUnavailableScoringDoesNotPersistOrReward(t *testing.T) {
+	repo, rewards := &fakeRepo{}, &countRewarder{}
+	svc := NewService(unavailableScorer{}, repo, rewards)
+	if svc.Available() {
+		t.Fatal("stub must not advertise pronunciation assessment")
+	}
+	_, _, err := svc.Score(context.Background(), "u", "item", 2, domain.ScoreInput{Expected: "Say this", Audio: []byte{1}})
+	if err != ErrScoringUnavailable || repo.best != nil || rewards.n != 0 {
+		t.Fatalf("unavailable scoring must not change progress: %v %+v %+v", err, repo, rewards)
+	}
+}
+
+func TestInvalidProviderOutputDoesNotPersistOrReward(t *testing.T) {
+	negative := -1
+	for _, assessment := range []*domain.Assessment{nil, {Overall: 101}, {Overall: 90, Accuracy: &negative}, {Overall: 90, Words: []domain.WordScore{{Word: "hi", Score: 101}}}} {
+		repo, rewards := &fakeRepo{}, &countRewarder{}
+		svc := NewService(invalidScorer{assessment}, repo, rewards)
+		_, _, err := svc.Score(context.Background(), "u", "item", 2, domain.ScoreInput{Expected: "Say this", Audio: []byte{1}})
+		if err == nil || repo.best != nil || rewards.n != 0 {
+			t.Fatalf("invalid output must not change progress: %v %+v", err, assessment)
+		}
+	}
+}
+
 func (fakeScorer) Name() string { return "fake" }
 func (fakeScorer) Score(context.Context, domain.ScoreInput) (*domain.Assessment, error) {
 	return &domain.Assessment{Overall: 90}, nil

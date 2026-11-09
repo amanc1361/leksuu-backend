@@ -3,6 +3,7 @@
 package rest
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
@@ -60,6 +61,10 @@ func (h *Handler) Score(w http.ResponseWriter, r *http.Request) {
 		ContentType: hdr.Header.Get("Content-Type"),
 	})
 	if err != nil {
+		if errors.Is(err, usecase.ErrScoringUnavailable) {
+			web.JSON(w, http.StatusServiceUnavailable, map[string]any{"error": map[string]string{"code": "pronunciation.unavailable", "message": "Pronunciation assessment is not configured."}})
+			return
+		}
 		web.Error(w, r, err)
 		return
 	}
@@ -68,6 +73,10 @@ func (h *Handler) Score(w http.ResponseWriter, r *http.Request) {
 		resp["line_score"] = ls
 	}
 	web.JSON(w, http.StatusOK, resp)
+}
+
+func (h *Handler) Capabilities(w http.ResponseWriter, r *http.Request) {
+	web.JSON(w, http.StatusOK, map[string]any{"available": h.svc.Available(), "provider": h.svc.ProviderName()})
 }
 
 func (h *Handler) Scores(w http.ResponseWriter, r *http.Request) {
