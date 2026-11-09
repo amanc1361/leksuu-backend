@@ -16,6 +16,49 @@ def witness(*entries):
 
 
 class AlignmentTest(unittest.TestCase):
+    def test_full_recording_chunks_keep_late_lyrics_without_vad(self):
+        from types import SimpleNamespace
+        from leksuu_media_worker import transcribe
+        class Audio:
+            def __len__(self): return 125 * 16000
+            def __getitem__(self, key): return key
+        calls = []
+        class Model:
+            def transcribe(self, audio, **options):
+                calls.append((audio, options))
+                # Relative timestamp in each overlapping window.
+                word = SimpleNamespace(start=4, end=5, word=" Late", probability=.9)
+                return iter([SimpleNamespace(words=[word])]), None
+        with patch("leksuu_media_worker.MODEL", Model()), \
+             patch("leksuu_media_worker.MODEL_NAME", "test-model"), \
+             patch.dict("os.environ", {"MEDIA_JOBS_WHISPER_MODEL": "test-model"}), \
+             patch("leksuu_media_worker.decode_audio", return_value=Audio()):
+            result = transcribe("unused.mkv", "en")
+        self.assertEqual(len(calls), 3)
+        self.assertTrue(all(not options["vad_filter"] for _, options in calls))
+        self.assertEqual([line["start"] for line in result["segments"]], [4, 62, 122])
+        self.assertEqual(result["duration_seconds"], 125)
+        self.assertEqual(result["segments"][-1]["text"], "Late")
+
+    def test_instrumental_gap_splits_generated_lyric_lines(self):
+        from types import SimpleNamespace
+        from leksuu_media_worker import transcribe
+        class Audio:
+            def __len__(self): return 50 * 16000
+            def __getitem__(self, key): return key
+        class Model:
+            def transcribe(self, *_args, **_kwargs):
+                timed = [SimpleNamespace(start=i, end=i+.5, word=" lyric", probability=.9)
+                         for i in [1, 2, 3, 40, 41, 42]]
+                return iter([SimpleNamespace(words=timed)]), None
+        with patch("leksuu_media_worker.MODEL", Model()), \
+             patch("leksuu_media_worker.MODEL_NAME", "test-model"), \
+             patch.dict("os.environ", {"MEDIA_JOBS_WHISPER_MODEL": "test-model"}), \
+             patch("leksuu_media_worker.decode_audio", return_value=Audio()):
+            result = transcribe("unused.mp3", "en")
+        self.assertEqual([(line["start"], line["end"]) for line in result["segments"]],
+                         [(1, 3.5), (40, 42.5)])
+
     def test_story_reconciliation_requires_exact_word_timing_once(self):
         payload = {"url": "/media/story.mp3", "language": "en", "audio_sha256": "a" * 64,
                    "transcript": [{"text": "Two words.", "start": 1.0, "end": 2.0}]}
