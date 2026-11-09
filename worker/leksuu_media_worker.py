@@ -28,6 +28,7 @@ import psycopg  # noqa: E402
 from psycopg.rows import dict_row  # noqa: E402
 from psycopg.types.json import Jsonb  # noqa: E402
 from faster_whisper import WhisperModel  # noqa: E402
+from faster_whisper.audio import decode_audio  # noqa: E402
 
 _open = av.open
 
@@ -246,7 +247,7 @@ def opening_sound_onset(path, threshold=0.015, maximum_seconds=5.0):
 
 def transcribe(path, language):
     global MODEL, MODEL_NAME
-    model_name = "base.en" if language == "en" else "base"
+    model_name = os.environ.get("MEDIA_JOBS_WHISPER_MODEL") or ("small.en" if language == "en" else "small")
     if MODEL_NAME != model_name:
         model_root = os.environ.get("MEDIA_JOBS_MODEL_DIR",
                                 str(Path(tempfile.gettempdir()) / "leksuu-whisper-models"))
@@ -259,14 +260,44 @@ def transcribe(path, language):
             MODEL = WhisperModel(model_name, local_files_only=False, **options)
         MODEL_NAME = model_name
     whisper_lang = {"ckb": "ku"}.get(language, language)
-    segments, info = MODEL.transcribe(str(path), language=whisper_lang, beam_size=5,
-                                      word_timestamps=True, vad_filter=True,
+    # Decode once, then cover every minute with overlapping context. Speech VAD
+    # can discard singing; never use it to decide which parts deserve ASR.
+    audio = decode_audio(str(path), sampling_rate=16000)
+    duration = len(audio) / 16000
+    result = []
+    for core in range(0, len(audio), 60 * 16000):
+        left = max(0, core - 2 * 16000)
+        right = min(len(audio), core + 62 * 16000)
+        segments, _ = MODEL.transcribe(audio[left:right], language=whisper_lang, beam_size=5,
+                                      word_timestamps=True, vad_filter=False,
                                       condition_on_previous_text=False)
-    return {"language": language, "duration_seconds": info.duration, "segments": [
-        {"start": part.start, "end": part.end, "text": part.text,
-         "words": [{"start": word.start, "end": word.end, "word": word.word,
-                    "probability": word.probability} for word in (part.words or [])]}
-        for part in segments]}
+        for part in segments:
+            kept = []
+            for word in part.words or []:
+                start, end = word.start + left / 16000, word.end + left / 16000
+                midpoint = (start + end) / 2
+                if core / 16000 <= midpoint < min(duration, core / 16000 + 60) and end > start:
+                    kept.append({"start": max(0, start), "end": min(duration, end),
+                                 "word": word.word, "probability": word.probability})
+            # Split long model segments into readable lines using observed words.
+            # No interpolation across instrumental breaks or missing lyrics.
+            group = []
+            for word in kept:
+                if group and (len(group) >= 12 or word["start"] - group[-1]["end"] > 2 or
+                              word["end"] - group[0]["start"] > 8):
+                    result.append(asr_line(group))
+                    group = []
+                group.append(word)
+            if group:
+                result.append(asr_line(group))
+    return {"language": language, "duration_seconds": duration, "segments": result,
+            "transcription_version": 2, "model": model_name}
+
+
+def asr_line(group):
+    return {"start": group[0]["start"], "end": group[-1]["end"],
+            "text": "".join(word["word"] for word in group).strip(), "words": group}
+
 
 
 def translation_source(payload):
@@ -477,7 +508,7 @@ def process(job):
                 if not cue.get("text") or not previous <= cue["start"] < cue["end"] <= duration + 0.3:
                     raise ValueError("invalid_existing_subtitle_timing")
                 previous = cue["end"]
-        if job["result"] and job["result"].get("phase") == "asr_checkpoint" and job["result"].get("audio_sha256") == digest:
+        if job["result"] and job["result"].get("phase") == "asr_checkpoint" and job["result"].get("audio_sha256") == digest and job["result"].get("witness", {}).get("transcription_version") == 2:
             witness = job["result"]["witness"]
         else:
             witness = transcribe(media, language)
@@ -495,6 +526,17 @@ def process(job):
             raise ValueError("no_spoken_transcript_detected")
         onset = opening_sound_onset(media)
         cues, exceptions, extra, matched, total = align(transcript, witness, duration, offset, onset)
+        if job["kind"] == "music":
+            boundaries = [(segment["start"], segment["end"]) for segment in witness["segments"]]
+            previous = 0.0
+            for start, end in boundaries + [(duration, duration)]:
+                if start - previous > 20:
+                    exceptions.append({"reasons": ["possible_missing_lyrics_or_instrumental"],
+                                       "candidate_start": previous, "candidate_end": start})
+                previous = max(previous, end)
+            for i, cue in enumerate(cues):
+                if cue.get("end", 0) - cue.get("start", 0) > 12:
+                    exceptions.append({"paragraph": i + 1, "reasons": ["suspicious_long_lyric_timing"]})
         if all_existing_timed:
             for i, cue in enumerate(cues):
                 original = transcript[i]

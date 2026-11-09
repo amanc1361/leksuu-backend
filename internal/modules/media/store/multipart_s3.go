@@ -45,9 +45,9 @@ func multipartExt(contentType string) string {
 		return ".webm"
 	case "video/quicktime":
 		return ".mov"
-	case "video/x-matroska":
+	case "video/x-matroska", "video/matroska", "application/x-matroska":
 		return ".mkv"
-	case "video/x-msvideo":
+	case "video/x-msvideo", "video/avi", "video/msvideo":
 		return ".avi"
 	case "video/mpeg":
 		return ".mpeg"

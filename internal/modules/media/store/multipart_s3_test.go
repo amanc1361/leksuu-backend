@@ -11,7 +11,7 @@ import (
 )
 
 func TestAdditionalMultipartContainerFormats(t *testing.T) {
-	for mime, extension := range map[string]string{"audio/flac": ".flac", "audio/x-flac": ".flac", "audio/aac": ".aac", "audio/opus": ".opus", "video/x-matroska": ".mkv", "video/x-msvideo": ".avi", "video/mpeg": ".mpeg", "video/ogg": ".ogv", "audio/wave": ".wav"} {
+	for mime, extension := range map[string]string{"audio/flac": ".flac", "audio/x-flac": ".flac", "audio/aac": ".aac", "audio/opus": ".opus", "video/x-matroska": ".mkv", "video/matroska": ".mkv", "application/x-matroska": ".mkv", "video/avi": ".avi", "video/x-msvideo": ".avi", "video/mpeg": ".mpeg", "video/ogg": ".ogv", "audio/wave": ".wav"} {
 		if got := multipartExt(mime); got != extension {
 			t.Errorf("%s stored with %q; want %q", mime, got, extension)
 		}
