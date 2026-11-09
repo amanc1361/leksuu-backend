@@ -611,9 +611,8 @@ def run_once(worker_id):
         result = process(job)
         state = finish(job["id"], worker_id, result=result)
     except Exception as exc:
-        code = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
-        if not re.fullmatch(r"[a-z0-9_]+", code):
-            code = "processing_failed"
+        from job_errors import failure_code
+        code = failure_code(exc, job["operation"])
         state = finish(job["id"], worker_id, error=code)
     finally:
         stop.set()
