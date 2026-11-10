@@ -204,7 +204,7 @@ func (s *Service) EnqueueTranslationJob(ctx context.Context, itemID, targetLangu
 			Translation map[string]string `json:"translation"`
 		} `json:"transcript"`
 	}
-	if json.Unmarshal(item.Payload, &payload) != nil || len(payload.Transcript) == 0 || len(payload.Transcript) > 120 {
+	if json.Unmarshal(item.Payload, &payload) != nil || len(payload.Transcript) == 0 || len(payload.Transcript) > 2000 {
 		return nil, apperr.ErrBadRequest
 	}
 	if payload.TranslationStatus[targetLanguage] == "approved" || payload.TranslationStatus[targetLanguage] == "human_approved" {

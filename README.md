@@ -147,32 +147,56 @@ Admin story cover generation uses `COVER_IMAGE_API_KEY` and optional
 The endpoint is admin-only and generated images require approval before the
 story payload changes.
 
-### Draft media synchronization jobs
+### Automatic media preparation
 
-Migration `0057_media_processing_jobs` stores one shared queue for Stories,
-Podcasts and Films. Admin media uploads stage a draft and enqueue processing
-when a media URL is present. Run the worker with
-`docker compose --profile media-processing up -d media-worker` after migrations.
-One worker processes one item at a time; additional replicas claim distinct
-jobs through PostgreSQL locks. The worker streams same-origin `/media/` files,
-checks the source checksum, transcribes or validates existing cues, and saves a
-review artifact. It never publishes content or changes the media item. Admins
-inspect and correct timing, then explicitly accept it. Cancellation, bounded
-retries, progress, lease recovery and an ASR checkpoint survive page closure
-and worker restart.
+The media worker discovers saved unpublished Music, Film, Podcast and audio
+Story drafts automatically. It runs one stage at a time for each draft: HLS
+for Film/Music, full-recording transcription/alignment, a second speech-model
+check, Persian translation and Sorani translation. Results are saved to the
+draft automatically. No per-line acceptance is needed for checks that pass.
+Only flagged passages need attention; publication remains a final admin action.
+The worker never publishes or confirms rights. Existing published content is
+excluded from automatic discovery.
+
+Automatic acceptance is recorded as `auto_approved`, separately from human
+`approved`. The second recognizer must match every source word, agree on cue
+boundaries within 0.75 seconds, and report word confidence of at least 0.85.
+Alignment exceptions override acceptance. Translation checks use script and
+English round-trip similarity (at least 0.85); they are conservative heuristics,
+not proof of semantic accuracy or native fluency. Non-English source translation
+checks remain exceptions. Model disagreement, music/silence gaps and suspicious
+translations are shown in the admin exception list. No model can guarantee
+perfect recognition, especially for singing or overlapping dialogue.
+
+Deployment requires the updated API, frontend and worker image. Run the worker
+against the intended existing database with migrations through 0062 already
+applied. Do not start a default Compose database as a substitute for existing
+content. No new schema migration is required for this workflow. Queue polling,
+leases, bounded retries, cancellation and checkpoints survive page closure.
+A failed stage stays failed until retried; it is not continuously requeued.
+Edits made while processing cause a conflict instead of being overwritten.
+
+`MEDIA_JOBS_AUTOMATION_ENABLED=true` is the worker default; set it to `false`
+to retain the older manual workflow. Default recognition uses `small.en` and
+verification uses `medium.en` for English; other languages default to the
+multilingual `small` and `medium` models. Leave `MEDIA_JOBS_WHISPER_MODEL` and
+`MEDIA_JOBS_VERIFICATION_MODEL` empty for language-aware defaults, or override
+them with two different appropriate models. The second pass increases CPU/memory use and latency.
+`MEDIA_JOBS_RECONCILE_SECONDS` defaults to 30. Prepare both speech models in the
+persistent model volume and install the MADLAD translation model using
+`worker/translation_model_setup.py` before processing real uploads. Missing
+model/dependency errors remain visible instead of passing checks.
 
 Set `MEDIA_PUBLIC_URL` to the public site origin so the worker can map stored
 URLs to `http://api:8080`; external media origins are rejected. The `media-models`
-volume keeps downloaded Whisper models between restarts. Set
-`MEDIA_JOBS_MAX_BYTES` to cap an individual upload (default 2 GiB). This worker
-uses local CPU inference and does not call a paid alignment API. Cover approval
-and translation approval remain separate Admin decisions.
-The worker accepts the standard production `DATABASE_URL`; an explicit
-`MEDIA_JOBS_DATABASE_URL` overrides it when the queue uses a separate database.
-The worker image uses Python 3.11 with PyAV 18.1. If the default image registry
-or Python package index is unavailable, set `PYTHON_BASE` or `PIP_INDEX_URL`
-for the Compose build. A cached Whisper model loads locally without a network
-lookup; the first run still downloads the model into `media-models`.
+volume keeps downloaded models between restarts. `MEDIA_JOBS_MAX_BYTES` caps
+an upload at 2 GiB by default. Translation is limited to 2,000 cues and 100,000
+characters by default (`MEDIA_TRANSLATION_MAX_CUES` / `MEDIA_TRANSLATION_MAX_CHARS`).
+Use local CPU inference; no paid transcription/translation API is invoked.
+`MEDIA_JOBS_DATABASE_URL` overrides `DATABASE_URL`. The worker image uses Python
+3.11 with PyAV; the first model download needs network access. Compose's
+`media-processing` profile supplies the worker, but its default database target
+must be reviewed before running it in an existing environment.
 
 **Load-speed choices:** content-addressed keys + a one-year immutable cache
 (instant repeat loads / CDN-friendly), HTTP range requests for video, and on the

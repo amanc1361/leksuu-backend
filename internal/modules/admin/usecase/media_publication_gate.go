@@ -9,6 +9,10 @@ import (
 	"github.com/leksuu/platform/internal/shared/apperr"
 )
 
+func acceptedMediaReview(value string) bool {
+	return value == "approved" || value == "auto_approved"
+}
+
 var ErrMediaPublicationReview = apperr.New("admin.media_publication_review_required", apperr.KindConflict)
 
 // publicationAllowed is deliberately conservative for imported stories with
@@ -31,8 +35,8 @@ func publicationAllowed(payload json.RawMessage) bool {
 		} `json:"transcript"`
 	}
 	if json.Unmarshal(payload, &item) != nil || !item.Review.RightsApproved ||
-		item.Review.QualityReview != "approved" || !item.Review.AudioTranscriptMatchVerified ||
-		item.TranslationStatus["fa"] != "approved" || item.TranslationStatus["ckb"] != "approved" ||
+		!acceptedMediaReview(item.Review.QualityReview) || !item.Review.AudioTranscriptMatchVerified ||
+		!acceptedMediaReview(item.TranslationStatus["fa"]) || !acceptedMediaReview(item.TranslationStatus["ckb"]) ||
 		len(item.Transcript) == 0 {
 		return false
 	}
@@ -94,9 +98,9 @@ func guardPublication(existing, replacement json.RawMessage) error {
 		}
 		for _, cue := range before.Transcript {
 			if cue.CueID == "" || cue.Start == nil || cue.End == nil || *cue.End <= *cue.Start ||
-				cue.TimingStatus != "approved" || cue.EditorialReview.Decision != "approved" ||
-				cue.ExerciseReview != "approved" || cue.TranslationReview["fa"] != "approved" ||
-				cue.TranslationReview["ckb"] != "approved" || cue.Translation["fa"] == "" || cue.Translation["ckb"] == "" {
+				!acceptedMediaReview(cue.TimingStatus) || !acceptedMediaReview(cue.EditorialReview.Decision) ||
+				!acceptedMediaReview(cue.ExerciseReview) || !acceptedMediaReview(cue.TranslationReview["fa"]) ||
+				!acceptedMediaReview(cue.TranslationReview["ckb"]) || cue.Translation["fa"] == "" || cue.Translation["ckb"] == "" {
 				return ErrMediaPublicationReview
 			}
 		}

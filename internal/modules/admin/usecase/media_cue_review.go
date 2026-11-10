@@ -102,12 +102,12 @@ func (s *Service) ReviewMediaCue(ctx context.Context, itemID string, in MediaCue
 			return apperr.ErrBadRequest
 		}
 		sourceChanged := beforeText != strings.TrimSpace(in.Text) || start != *in.Start || end != *in.End
-		if sourceReview.Decision == "approved" && sourceChanged {
+		if acceptedMediaReview(sourceReview.Decision) && sourceChanged {
 			return ErrMediaPublicationReview
 		}
 		for _, lang := range []string{"fa", "ckb"} {
 			if value, exists := in.Translation[lang]; exists {
-				if translationReview[lang] == "approved" && translations[lang] != value {
+				if acceptedMediaReview(translationReview[lang]) && translations[lang] != value {
 					return ErrMediaPublicationReview
 				}
 				if len(value) > 10000 {
@@ -119,7 +119,7 @@ func (s *Service) ReviewMediaCue(ctx context.Context, itemID string, in MediaCue
 				translations[lang] = strings.TrimSpace(value)
 			}
 		}
-		if exerciseReview == "approved" && sourceChanged {
+		if acceptedMediaReview(exerciseReview) && sourceChanged {
 			return ErrMediaPublicationReview
 		}
 		write("text", strings.TrimSpace(in.Text))
@@ -150,7 +150,7 @@ func (s *Service) ReviewMediaCue(ctx context.Context, itemID string, in MediaCue
 		translationReview[lang] = "approved"
 		write("translation_review", translationReview)
 	case "exercise_approve":
-		if sourceReview.Decision != "approved" || len(strings.Fields(beforeText)) < 2 {
+		if !acceptedMediaReview(sourceReview.Decision) || len(strings.Fields(beforeText)) < 2 {
 			return apperr.ErrBadRequest
 		}
 		write("exercise_review", "approved")
@@ -194,7 +194,7 @@ func (s *Service) ReviewMediaCue(ctx context.Context, itemID string, in MediaCue
 		for _, entry := range cues {
 			var reviews map[string]string
 			_ = json.Unmarshal(entry["translation_review"], &reviews)
-			if reviews[lang] != "approved" {
+			if !acceptedMediaReview(reviews[lang]) {
 				all = false
 				break
 			}
