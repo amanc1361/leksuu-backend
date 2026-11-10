@@ -112,7 +112,7 @@ func (s *Service) RecordMediaAttempt(ctx context.Context, userID, itemID, langua
 	var expected string
 	found := false
 	for _, cue := range payload.Transcript {
-		if cue.CueID == cueID && (cue.TimingStatus == "verified" || cue.TimingStatus == "approved") && cue.ExerciseReview == "approved" {
+		if cue.CueID == cueID && (cue.TimingStatus == "verified" || cue.TimingStatus == "approved" || cue.TimingStatus == "auto_approved") && (cue.ExerciseReview == "approved" || cue.ExerciseReview == "auto_approved") {
 			found = true
 			if full {
 				expected = cue.Text

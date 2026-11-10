@@ -21,6 +21,8 @@ import uuid
 from pathlib import Path
 
 from hls_pipeline import run_ffmpeg, upload_hls
+from media_automation import (next_stage, source_assessment, translation_assessment,
+                              accept_source, apply_translations, translation_hash, media_source)
 
 sys.path.insert(0, str(Path(tempfile.gettempdir()) / "leksuu-align-pydeps"))
 import av  # noqa: E402
@@ -115,6 +117,46 @@ def reconcile_story_jobs():
             queued += 1
     if queued:
         print(json.dumps({"event": "story_reconciliation", "queued": queued}), flush=True)
+    return queued
+
+
+def automation_enabled():
+    return os.environ.get("MEDIA_JOBS_AUTOMATION_ENABLED", "true").lower() in ("true", "1", "yes")
+
+
+def reconcile_media_jobs():
+    """Discover saved uploads and serialize preparation stages for each draft."""
+    if not automation_enabled():
+        return 0
+    queued = 0
+    with db() as connection:
+        rows = connection.execute("""SELECT id,kind,payload,payload::text AS payload_text FROM lesson_items
+            WHERE kind IN ('story','podcast','video','music') AND payload->>'published'='false'
+            AND nullif(payload->>'url','') IS NOT NULL ORDER BY id FOR UPDATE SKIP LOCKED""").fetchall()
+        for row in rows:
+            payload = row["payload"]
+            stage = next_stage(row["kind"], payload)
+            if not stage:
+                continue
+            operation, target = stage
+            active = connection.execute("""SELECT 1 FROM media_processing_jobs WHERE item_id=%s
+                AND status IN ('pending','running') LIMIT 1""", (row["id"],)).fetchone()
+            if active:
+                continue
+            # Failed/cancelled jobs remain visible for retry; never loop forever.
+            existing = connection.execute("""SELECT 1 FROM media_processing_jobs WHERE item_id=%s
+                AND operation=%s AND target_language=%s AND payload_snapshot=%s LIMIT 1""",
+                (row["id"], operation, target, Jsonb(payload))).fetchone()
+            if existing:
+                continue
+            digest = hashlib.sha256(row["payload_text"].encode()).hexdigest()
+            if operation == "translate":
+                digest = translation_hash(payload)
+            connection.execute("""INSERT INTO media_processing_jobs
+                (item_id,kind,operation,target_language,payload_sha256,payload_snapshot,events)
+                VALUES (%s,%s,%s,%s,%s,%s,'[{"event":"queued_automatically"}]'::jsonb)
+                ON CONFLICT DO NOTHING""", (row["id"], row["kind"], operation, target, digest, Jsonb(payload)))
+            queued += 1
     return queued
 
 
@@ -245,9 +287,9 @@ def opening_sound_onset(path, threshold=0.015, maximum_seconds=5.0):
     return None
 
 
-def transcribe(path, language):
+def transcribe(path, language, verification_model=None):
     global MODEL, MODEL_NAME
-    model_name = os.environ.get("MEDIA_JOBS_WHISPER_MODEL") or ("small.en" if language == "en" else "small")
+    model_name = verification_model or os.environ.get("MEDIA_JOBS_WHISPER_MODEL") or ("small.en" if language == "en" else "small")
     if MODEL_NAME != model_name:
         model_root = os.environ.get("MEDIA_JOBS_MODEL_DIR",
                                 str(Path(tempfile.gettempdir()) / "leksuu-whisper-models"))
@@ -366,7 +408,7 @@ def process_translation(job, current):
     if target not in allowed or not re.fullmatch(r"[a-z]{2,3}", target):
         raise ValueError("unsupported_translation_target")
     cues = current.get("transcript") or []
-    if not cues or len(cues) > int(os.environ.get("MEDIA_TRANSLATION_MAX_CUES", "120")) or \
+    if not cues or len(cues) > int(os.environ.get("MEDIA_TRANSLATION_MAX_CUES", "2000")) or \
             sum(len(cue.get("text", "")) for cue in cues) > int(os.environ.get("MEDIA_TRANSLATION_MAX_CHARS", "100000")):
         raise ValueError("translation_cost_limit")
     if current.get("translation_status", {}).get(target) in ("approved", "human_approved"):
@@ -379,12 +421,18 @@ def process_translation(job, current):
         translated = []
     done = {row["paragraph"] for row in translated}
     for index, cue in enumerate(cues, 1):
-        if index in done or (cue.get("translation") or {}).get(target, "").strip():
+        existing = (cue.get("translation") or {}).get(target, "").strip()
+        automatic = automation_enabled() and current.get("published") is False
+        if index in done or (existing and not automatic) or (cue.get("translation_review") or {}).get(target) == "approved":
             continue
         if not cue.get("text", "").strip():
             raise ValueError("translation_source_missing")
+        value = existing or translate_text(cue["text"], target)
+        check = {"passed": False, "reason": "unsupported_source_language"}
+        if automatic and current.get("language", "en") == "en":
+            check = translation_assessment(cue["text"], value, translate_text(value, "en"))
         translated.append({"paragraph": index, "text": cue["text"],
-                           "translation": translate_text(cue["text"], target)})
+                           "translation": value, "automatic_check": check})
         with db() as connection:
             connection.execute("""UPDATE media_processing_jobs SET result=%s,progress=%s,updated_at=now()
                 WHERE id=%s AND status='running'""", (Jsonb({"phase": "translation_checkpoint",
@@ -416,7 +464,7 @@ def align(transcript, witness, duration, offset, audible_onset=None):
         lead = pairs[0][0] - positions[0] if pairs else count
         trail = positions[-1] - pairs[-1][0] if pairs else count
         reasons = []
-        if len(pairs) < 3 or (count and len(pairs) / count < 0.8):
+        if not pairs or (count and len(pairs) / count < 0.8):
             reasons.append("low_word_match")
         if lead > 1 or trail > 1:
             reasons.append("unmatched_boundary_words")
@@ -526,12 +574,12 @@ def process(job):
             raise ValueError("no_spoken_transcript_detected")
         onset = opening_sound_onset(media)
         cues, exceptions, extra, matched, total = align(transcript, witness, duration, offset, onset)
-        if job["kind"] == "music":
+        if job["kind"] in ("music", "video"):
             boundaries = [(segment["start"], segment["end"]) for segment in witness["segments"]]
             previous = 0.0
             for start, end in boundaries + [(duration, duration)]:
                 if start - previous > 20:
-                    exceptions.append({"reasons": ["possible_missing_lyrics_or_instrumental"],
+                    exceptions.append({"reasons": ["possible_missing_lyrics_or_instrumental" if job["kind"] == "music" else "possible_missing_dialogue_or_silence"],
                                        "candidate_start": previous, "candidate_end": start})
                 previous = max(previous, end)
             for i, cue in enumerate(cues):
@@ -551,7 +599,16 @@ def process(job):
                 cue["start"] = original["start"]
                 cue["end"] = original["end"]
                 cue.pop("timing_status", None)
+        automatic_check = None
+        if automation_enabled():
+            verification_model = os.environ.get("MEDIA_JOBS_VERIFICATION_MODEL") or ("medium.en" if language == "en" else "medium")
+            if verification_model == witness.get("model"):
+                automatic_check = {"passed": False, "issues": [{"reasons": ["verification_model_must_differ"]}]}
+            else:
+                verification = transcribe(media, language, verification_model)
+                automatic_check = source_assessment(cues, verification, duration)
         return {"audio_sha256": digest, "cues": cues, "exceptions": exceptions,
+                "automatic_source_check": automatic_check,
                 "unmatched_spoken_runs": extra,
                 "method": "validated_existing_cues_with_asr" if all_existing_timed else method,
                 "language": language, "duration_seconds": duration,
@@ -601,8 +658,8 @@ def merge_synchronization(source, result, job_id):
 
 def finish(job_id, worker_id, result=None, error=None):
     with db() as connection:
-        row = connection.execute("SELECT cancel_requested,status,item_id,payload_snapshot,operation FROM media_processing_jobs WHERE id=%s FOR UPDATE", (job_id,)).fetchone()
-        if not row or row["status"] != "running":
+        row = connection.execute("SELECT cancel_requested,status,item_id,payload_snapshot,payload_sha256,target_language,operation,worker_id FROM media_processing_jobs WHERE id=%s FOR UPDATE", (job_id,)).fetchone()
+        if not row or row["status"] != "running" or row["worker_id"] != worker_id:
             return "lost_claim"
         if row["cancel_requested"]:
             next_status, error = "cancelled", "cancel_requested"
@@ -617,9 +674,31 @@ def finish(job_id, worker_id, result=None, error=None):
                     if not current or current["payload"] != source:
                         raise ValueError("source_changed_since_queue")
                     updated, unresolved = merge_synchronization(source, result, job_id)
+                    if automation_enabled() and source.get("published") is False:
+                        updated = accept_source(updated, result, job_id)
+                        unresolved = not all(cue.get("editorial_review", {}).get("decision") in ("approved", "auto_approved")
+                                             for cue in updated.get("transcript", []))
                     connection.execute("UPDATE lesson_items SET payload=%s WHERE id=%s AND payload=%s",
                                        (Jsonb(updated), row["item_id"], Jsonb(source)))
                     next_status = "review" if unresolved else "ready"
+                except ValueError as exc:
+                    next_status, error = "failed", str(exc)
+            elif row["operation"] == "translate" and automation_enabled() and row["payload_snapshot"].get("published") is False:
+                try:
+                    source = row["payload_snapshot"]
+                    current = connection.execute("SELECT payload FROM lesson_items WHERE id=%s FOR UPDATE", (row["item_id"],)).fetchone()
+                    if not current or translation_source(current["payload"]) != translation_source(source):
+                        raise ValueError("source_changed_since_queue")
+                    if any(before.get("review_revision", 0) != after.get("review_revision", 0)
+                           for before, after in zip(source.get("transcript") or [], current["payload"].get("transcript") or [])):
+                        raise ValueError("source_changed_since_queue")
+                    target = result["target_language"]
+                    if target != row["target_language"] or result.get("source_sha256") != row["payload_sha256"]:
+                        raise ValueError("source_changed_since_queue")
+                    updated = apply_translations(current["payload"], result, target, job_id)
+                    connection.execute("UPDATE lesson_items SET payload=%s WHERE id=%s AND payload=%s",
+                                       (Jsonb(updated), row["item_id"], Jsonb(current["payload"])))
+                    next_status = "ready" if updated["automation"]["translations"][target]["passed"] else "review"
                 except ValueError as exc:
                     next_status, error = "failed", str(exc)
             elif row["operation"] == "transcode":
@@ -631,6 +710,7 @@ def finish(job_id, worker_id, result=None, error=None):
                     updated = dict(source)
                     updated["hls_manifest_key"] = result["hls_manifest_key"]
                     updated["hls_status"] = "ready"
+                    updated["hls_source"] = media_source(source)
                     connection.execute("UPDATE lesson_items SET payload=%s WHERE id=%s AND payload=%s",
                                        (Jsonb(updated), row["item_id"], Jsonb(source)))
                     next_status = "ready"
@@ -669,17 +749,19 @@ def main():
     args = parser.parse_args()
     worker_id = str(uuid.uuid4())
     if args.once:
+        reconcile_media_jobs() if automation_enabled() else reconcile_story_jobs()
         run_once(worker_id)
         return
-    reconcile_story_jobs()
-    interval = max(30, int(os.environ.get("MEDIA_JOBS_RECONCILE_SECONDS", "300")))
+    reconcile_media_jobs() if automation_enabled() else reconcile_story_jobs()
+    interval = max(5, int(os.environ.get("MEDIA_JOBS_RECONCILE_SECONDS", "30")))
     next_reconcile = time.monotonic() + interval
     while True:
-        if not run_once(worker_id):
+        worked = run_once(worker_id)
+        if not worked:
             time.sleep(2)
-        if time.monotonic() >= next_reconcile:
+        if worked or time.monotonic() >= next_reconcile:
             try:
-                reconcile_story_jobs()
+                reconcile_media_jobs() if automation_enabled() else reconcile_story_jobs()
             except Exception as exc:
                 print(json.dumps({"event": "story_reconciliation_failed", "error": type(exc).__name__}), flush=True)
             next_reconcile = time.monotonic() + interval
