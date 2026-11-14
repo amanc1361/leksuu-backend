@@ -4,6 +4,7 @@ package repo
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -189,4 +190,36 @@ func (r *PostgresUserRepo) ListUsers(ctx context.Context, query, role, subMode s
 func (r *PostgresUserRepo) SetStatus(ctx context.Context, userID, status string) error {
 	_, err := r.pool.Exec(ctx, `UPDATE users SET status=$2, updated_at=now() WHERE id=$1`, userID, status)
 	return err
+}
+
+func (r *PostgresUserRepo) GetOnboarding(ctx context.Context, userID string) (domain.OnboardingState, error) {
+	var state domain.OnboardingState
+	var raw []byte
+	err := r.pool.QueryRow(ctx, `SELECT completed_at, skipped, answers FROM user_onboarding WHERE user_id=$1`, userID).
+		Scan(&state.CompletedAt, &state.Skipped, &raw)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.OnboardingState{Answers: domain.OnboardingAnswers{}}, nil
+	}
+	if err != nil {
+		return state, err
+	}
+	if err = json.Unmarshal(raw, &state.Answers); err != nil {
+		return state, err
+	}
+	state.Completed = true
+	return state, nil
+}
+
+func (r *PostgresUserRepo) CompleteOnboarding(ctx context.Context, userID string, answers domain.OnboardingAnswers, skipped bool) (domain.OnboardingState, error) {
+	raw, err := json.Marshal(answers)
+	if err != nil {
+		return domain.OnboardingState{}, err
+	}
+	// First write wins; retries (and simultaneous tabs) are idempotent.
+	_, err = r.pool.Exec(ctx, `INSERT INTO user_onboarding(user_id, answers, skipped) VALUES($1,$2,$3)
+        ON CONFLICT (user_id) DO NOTHING`, userID, raw, skipped)
+	if err != nil {
+		return domain.OnboardingState{}, err
+	}
+	return r.GetOnboarding(ctx, userID)
 }

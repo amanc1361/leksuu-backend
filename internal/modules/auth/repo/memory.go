@@ -16,14 +16,15 @@ import (
 // --- users ---
 
 type MemoryUserRepo struct {
-	mu      sync.RWMutex
-	byID    map[string]*domain.User
-	byEmail map[string]string
-	roles   map[string][]string
+	mu         sync.RWMutex
+	byID       map[string]*domain.User
+	byEmail    map[string]string
+	roles      map[string][]string
+	onboarding map[string]domain.OnboardingState
 }
 
 func NewMemoryUserRepo() *MemoryUserRepo {
-	return &MemoryUserRepo{byID: map[string]*domain.User{}, byEmail: map[string]string{}, roles: map[string][]string{}}
+	return &MemoryUserRepo{byID: map[string]*domain.User{}, byEmail: map[string]string{}, roles: map[string][]string{}, onboarding: map[string]domain.OnboardingState{}}
 }
 
 func (r *MemoryUserRepo) Create(_ context.Context, u *domain.User) error {
@@ -237,4 +238,30 @@ func (r *MemoryUserRepo) SetStatus(_ context.Context, userID, status string) err
 	}
 	u.Status = status
 	return nil
+}
+
+// A missing entry belongs to a new account and is not complete. Migrated
+// accounts are handled by the SQL migration in the persistent repository.
+func (r *MemoryUserRepo) GetOnboarding(_ context.Context, userID string) (domain.OnboardingState, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if _, ok := r.byID[userID]; !ok {
+		return domain.OnboardingState{}, domain.ErrUserNotFound
+	}
+	return r.onboarding[userID], nil
+}
+
+func (r *MemoryUserRepo) CompleteOnboarding(_ context.Context, userID string, answers domain.OnboardingAnswers, skipped bool) (domain.OnboardingState, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.byID[userID]; !ok {
+		return domain.OnboardingState{}, domain.ErrUserNotFound
+	}
+	if old, ok := r.onboarding[userID]; ok && old.Completed {
+		return old, nil
+	}
+	now := time.Now().UTC()
+	state := domain.OnboardingState{Completed: true, Skipped: skipped, Answers: answers, CompletedAt: &now}
+	r.onboarding[userID] = state
+	return state, nil
 }
