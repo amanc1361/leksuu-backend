@@ -63,6 +63,7 @@ func (h *Handler) PutMediaProgress(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		PositionSeconds float64 `json:"position_seconds"`
 		Completed       bool    `json:"completed"`
+		Revision        *int64  `json:"revision"`
 	}
 	d := json.NewDecoder(http.MaxBytesReader(w, r.Body, 2048))
 	d.DisallowUnknownFields()
@@ -70,11 +71,12 @@ func (h *Handler) PutMediaProgress(w http.ResponseWriter, r *http.Request) {
 		web.Error(w, r, apperr.ErrBadRequest)
 		return
 	}
-	if err := h.svc.SaveMediaPosition(r.Context(), user, r.PathValue("id"), lang, in.PositionSeconds, in.Completed); err != nil {
+	revision, err := h.svc.SaveMediaPosition(r.Context(), user, r.PathValue("id"), lang, in.PositionSeconds, in.Completed, in.Revision)
+	if err != nil {
 		web.Error(w, r, err)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	web.JSON(w, http.StatusOK, map[string]int64{"revision": revision})
 }
 
 func (h *Handler) PostMediaAttempt(w http.ResponseWriter, r *http.Request) {

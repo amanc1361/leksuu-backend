@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/leksuu/platform/internal/modules/course/usecase"
+	"github.com/leksuu/platform/internal/shared/apperr"
 )
 
 func mediaProgressKey(user, item, lang string) string { return user + "|" + item + "|" + lang }
@@ -16,15 +17,19 @@ func (r *MemoryProgressRepo) LoadMediaProgress(_ context.Context, user, item, la
 	return p, nil
 }
 
-func (r *MemoryProgressRepo) SaveMediaPosition(_ context.Context, user, item, lang string, position float64, completed bool) error {
+func (r *MemoryProgressRepo) SaveMediaPosition(_ context.Context, user, item, lang string, position float64, completed bool, revision *int64) (int64, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	key := mediaProgressKey(user, item, lang)
 	p := r.media[key]
+	if revision != nil && p.Revision != *revision {
+		return 0, apperr.New("media.progress_conflict", apperr.KindConflict)
+	}
 	p.PositionSeconds = position
 	p.Completed = p.Completed || completed
+	p.Revision++
 	r.media[key] = p
-	return nil
+	return p.Revision, nil
 }
 
 func (r *MemoryProgressRepo) RecordMediaAttempt(_ context.Context, user, item, lang, cue string, passed bool) (usecase.MediaProgress, error) {
@@ -33,6 +38,7 @@ func (r *MemoryProgressRepo) RecordMediaAttempt(_ context.Context, user, item, l
 	key := mediaProgressKey(user, item, lang)
 	p := r.media[key]
 	p.Attempts++
+	p.Revision++
 	if passed {
 		p.CorrectAttempts++
 		found := false

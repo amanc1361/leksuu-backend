@@ -4,6 +4,7 @@ package repo
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -25,10 +26,16 @@ type PostgresUserRepo struct{ pool *pgxpool.Pool }
 func NewPostgresUserRepo(pool *pgxpool.Pool) *PostgresUserRepo { return &PostgresUserRepo{pool: pool} }
 
 func (r *PostgresUserRepo) Create(ctx context.Context, u *domain.User) error {
-	const q = `INSERT INTO users (email, password_hash, display_name, native_lang, target_lang, cefr_level, status)
-	           VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id, created_at`
+	if u.TranslationLang == "" {
+		u.TranslationLang = "fa"
+		if u.NativeLang == "ckb" {
+			u.TranslationLang = "ckb"
+		}
+	}
+	const q = `INSERT INTO users (email, password_hash, display_name, native_lang, target_lang, cefr_level, status, translation_lang)
+	           VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id, created_at`
 	err := r.pool.QueryRow(ctx, q, u.Email, u.PasswordHash, u.DisplayName,
-		u.NativeLang, u.TargetLang, u.CEFR, u.Status).Scan(&u.ID, &u.CreatedAt)
+		u.NativeLang, u.TargetLang, u.CEFR, u.Status, u.TranslationLang).Scan(&u.ID, &u.CreatedAt)
 	if isUniqueViolation(err) {
 		return domain.ErrEmailTaken
 	}
@@ -37,20 +44,20 @@ func (r *PostgresUserRepo) Create(ctx context.Context, u *domain.User) error {
 
 func (r *PostgresUserRepo) ByEmail(ctx context.Context, email string) (*domain.User, error) {
 	return r.scanOne(ctx,
-		`SELECT id,email,password_hash,display_name,native_lang,target_lang,cefr_level,status,created_at
+		`SELECT id,email,password_hash,display_name,native_lang,target_lang,cefr_level,status,created_at,translation_lang
 		 FROM users WHERE email=$1`, email)
 }
 
 func (r *PostgresUserRepo) ByID(ctx context.Context, id string) (*domain.User, error) {
 	return r.scanOne(ctx,
-		`SELECT id,email,password_hash,display_name,native_lang,target_lang,cefr_level,status,created_at
+		`SELECT id,email,password_hash,display_name,native_lang,target_lang,cefr_level,status,created_at,translation_lang
 		 FROM users WHERE id=$1`, id)
 }
 
 func (r *PostgresUserRepo) scanOne(ctx context.Context, q string, arg any) (*domain.User, error) {
 	var u domain.User
 	err := r.pool.QueryRow(ctx, q, arg).Scan(&u.ID, &u.Email, &u.PasswordHash,
-		&u.DisplayName, &u.NativeLang, &u.TargetLang, &u.CEFR, &u.Status, &u.CreatedAt)
+		&u.DisplayName, &u.NativeLang, &u.TargetLang, &u.CEFR, &u.Status, &u.CreatedAt, &u.TranslationLang)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrUserNotFound
 	}
@@ -129,8 +136,8 @@ func (r *PostgresTokenRepo) RevokeFamily(ctx context.Context, familyID string) e
 
 func (r *PostgresUserRepo) UpdateProfile(ctx context.Context, userID string, p domain.ProfileFields) error {
 	_, err := r.pool.Exec(ctx,
-		`UPDATE users SET display_name=$2, native_lang=$3, target_lang=$4, cefr_level=$5, updated_at=now() WHERE id=$1`,
-		userID, p.DisplayName, p.NativeLang, p.TargetLang, p.CEFR)
+		`UPDATE users SET display_name=$2, native_lang=$3, target_lang=$4, cefr_level=$5, translation_lang=$6, updated_at=now() WHERE id=$1`,
+		userID, p.DisplayName, p.NativeLang, p.TargetLang, p.CEFR, p.TranslationLang)
 	return err
 }
 
@@ -189,4 +196,36 @@ func (r *PostgresUserRepo) ListUsers(ctx context.Context, query, role, subMode s
 func (r *PostgresUserRepo) SetStatus(ctx context.Context, userID, status string) error {
 	_, err := r.pool.Exec(ctx, `UPDATE users SET status=$2, updated_at=now() WHERE id=$1`, userID, status)
 	return err
+}
+
+func (r *PostgresUserRepo) GetOnboarding(ctx context.Context, userID string) (domain.OnboardingState, error) {
+	var state domain.OnboardingState
+	var raw []byte
+	err := r.pool.QueryRow(ctx, `SELECT completed_at, skipped, answers FROM user_onboarding WHERE user_id=$1`, userID).
+		Scan(&state.CompletedAt, &state.Skipped, &raw)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.OnboardingState{Answers: domain.OnboardingAnswers{}}, nil
+	}
+	if err != nil {
+		return state, err
+	}
+	if err = json.Unmarshal(raw, &state.Answers); err != nil {
+		return state, err
+	}
+	state.Completed = true
+	return state, nil
+}
+
+func (r *PostgresUserRepo) CompleteOnboarding(ctx context.Context, userID string, answers domain.OnboardingAnswers, skipped bool) (domain.OnboardingState, error) {
+	raw, err := json.Marshal(answers)
+	if err != nil {
+		return domain.OnboardingState{}, err
+	}
+	// First write wins; retries (and simultaneous tabs) are idempotent.
+	_, err = r.pool.Exec(ctx, `INSERT INTO user_onboarding(user_id, answers, skipped) VALUES($1,$2,$3)
+        ON CONFLICT (user_id) DO NOTHING`, userID, raw, skipped)
+	if err != nil {
+		return domain.OnboardingState{}, err
+	}
+	return r.GetOnboarding(ctx, userID)
 }

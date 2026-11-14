@@ -14,7 +14,7 @@ import (
 func (r *PostgresCourseRepo) PlaybackItem(ctx context.Context, id string) (*domain.LessonItem, error) {
 	var it domain.LessonItem
 	err := r.pool.QueryRow(ctx, `SELECT id,lesson_id,position,kind,ref_id,payload,media_key
-		FROM lesson_items WHERE id=$1 AND kind IN ('video','music')`, id).
+		FROM lesson_items WHERE id=$1 AND kind IN ('video','music','story','podcast')`, id).
 		Scan(&it.ID, &it.LessonID, &it.Position, &it.Kind, &it.RefID, &it.Payload, &it.MediaKey)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrItemNotFound

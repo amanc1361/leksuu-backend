@@ -17,6 +17,11 @@ var supported = map[string]struct{}{LocaleFa: {}, LocaleCkb: {}, LocaleEn: {}}
 
 // catalog maps message code -> locale -> text.
 var catalog = map[string]map[string]string{
+	"media.progress_conflict": {
+		LocaleEn:  "Learning progress changed on another device. Reload and try again.",
+		LocaleFa:  "پیشرفت یادگیری در دستگاه دیگری تغییر کرده است. صفحه را تازه کنید و دوباره تلاش کنید.",
+		LocaleCkb: "پێشکەوتنی فێربوون لە ئامێرێکی تر گۆڕاوە. لاپەڕەکە نوێ بکەرەوە و دووبارە هەوڵ بدەرەوە.",
+	},
 	"auth.email_required": {
 		LocaleEn:  "Email is required.",
 		LocaleFa:  "ایمیل الزامی است.",
@@ -271,6 +276,11 @@ var catalog = map[string]map[string]string{
 		LocaleEn:  "Invalid level.",
 		LocaleFa:  "سطح نامعتبر است.",
 		LocaleCkb: "ئاستی نادروست.",
+	},
+	"user.invalid_translation_lang": {
+		LocaleEn:  "Choose Persian or Kurdish Sorani for translations.",
+		LocaleFa:  "برای ترجمه فارسی یا کردی سورانی را انتخاب کنید.",
+		LocaleCkb: "بۆ وەرگێڕان فارسی یان کوردی سۆرانی هەڵبژێرە.",
 	},
 	"billing.class_subscription_required": {
 		LocaleEn:  "A class subscription is required to access live classes.",

@@ -21,25 +21,27 @@ const (
 
 // User is the account entity.
 type User struct {
-	ID           string
-	Email        string
-	PasswordHash string
-	DisplayName  string
-	NativeLang   string
-	TargetLang   string
-	CEFR         string
-	Status       string
-	CreatedAt    time.Time
+	ID              string
+	Email           string
+	PasswordHash    string
+	DisplayName     string
+	NativeLang      string
+	TranslationLang string
+	TargetLang      string
+	CEFR            string
+	Status          string
+	CreatedAt       time.Time
 }
 
 func (u *User) IsActive() bool { return u.Status == StatusActive }
 
 // ProfileFields are the user-editable profile attributes.
 type ProfileFields struct {
-	DisplayName string
-	NativeLang  string
-	TargetLang  string
-	CEFR        string
+	DisplayName     string
+	NativeLang      string
+	TranslationLang string
+	TargetLang      string
+	CEFR            string
 }
 
 // SupportedTargetLangs are the languages a learner can study (all Latin
