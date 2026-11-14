@@ -15,6 +15,7 @@ import (
 
 type MediaProgress struct {
 	PositionSeconds float64  `json:"position_seconds"`
+	Revision        int64    `json:"revision"`
 	Attempts        int      `json:"attempts"`
 	CorrectAttempts int      `json:"correct_attempts"`
 	CompletedCueIDs []string `json:"completed_cue_ids"`
@@ -23,7 +24,7 @@ type MediaProgress struct {
 
 type MediaProgressRepository interface {
 	LoadMediaProgress(context.Context, string, string, string) (MediaProgress, error)
-	SaveMediaPosition(context.Context, string, string, string, float64, bool) error
+	SaveMediaPosition(context.Context, string, string, string, float64, bool, *int64) (int64, error)
 	RecordMediaAttempt(context.Context, string, string, string, string, bool) (MediaProgress, error)
 }
 
@@ -76,18 +77,18 @@ func (s *Service) MediaProgress(ctx context.Context, userID, itemID, language st
 	return repo.LoadMediaProgress(ctx, userID, itemID, language)
 }
 
-func (s *Service) SaveMediaPosition(ctx context.Context, userID, itemID, language string, position float64, completed bool) error {
+func (s *Service) SaveMediaPosition(ctx context.Context, userID, itemID, language string, position float64, completed bool, revision *int64) (int64, error) {
 	if math.IsNaN(position) || math.IsInf(position, 0) || position < 0 || position >= 864000 {
-		return apperr.ErrBadRequest
+		return 0, apperr.ErrBadRequest
 	}
 	if _, err := s.mediaProgressTarget(ctx, userID, itemID, language); err != nil {
-		return err
+		return 0, err
 	}
 	repo, ok := s.progress.(MediaProgressRepository)
 	if !ok {
-		return apperr.ErrInternal
+		return 0, apperr.ErrInternal
 	}
-	return repo.SaveMediaPosition(ctx, userID, itemID, language, position, completed)
+	return repo.SaveMediaPosition(ctx, userID, itemID, language, position, completed, revision)
 }
 
 // The server grades against the currently published cue rather than trusting

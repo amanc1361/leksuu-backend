@@ -87,7 +87,7 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 	}
 	web.JSON(w, http.StatusOK, map[string]any{
 		"id": u.ID, "email": u.Email, "display_name": u.DisplayName,
-		"native_lang": u.NativeLang, "target_lang": u.TargetLang,
+		"native_lang": u.NativeLang, "translation_lang": u.TranslationLang, "target_lang": u.TargetLang,
 		"cefr": u.CEFR, "roles": principal.Roles,
 	})
 }
@@ -99,10 +99,11 @@ func (h *Handler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		DisplayName string `json:"display_name"`
-		NativeLang  string `json:"native_lang"`
-		TargetLang  string `json:"target_lang"`
-		CEFR        string `json:"cefr"`
+		DisplayName     string `json:"display_name"`
+		NativeLang      string `json:"native_lang"`
+		TranslationLang string `json:"translation_lang"`
+		TargetLang      string `json:"target_lang"`
+		CEFR            string `json:"cefr"`
 	}
 	if json.NewDecoder(r.Body).Decode(&in) != nil {
 		web.Error(w, r, apperr.ErrBadRequest)
@@ -115,7 +116,7 @@ func (h *Handler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	}
 	web.JSON(w, http.StatusOK, map[string]any{
 		"id": u.ID, "email": u.Email, "display_name": u.DisplayName,
-		"native_lang": u.NativeLang, "target_lang": u.TargetLang,
+		"native_lang": u.NativeLang, "translation_lang": u.TranslationLang, "target_lang": u.TargetLang,
 		"cefr": u.CEFR, "roles": principal.Roles,
 	})
 }

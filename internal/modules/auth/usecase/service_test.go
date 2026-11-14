@@ -264,6 +264,41 @@ func TestUpdateProfileAcceptsOnlySupportedTargetLanguages(t *testing.T) {
 	}
 }
 
+func TestTranslationLanguageBelongsToAccountAndSurvivesProfileUpdates(t *testing.T) {
+	s := newService()
+	ctx := context.Background()
+	a, err := s.Register(ctx, usecase.RegisterInput{Email: "translation-a@example.com", Password: "pw", NativeLang: "ckb"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := s.Register(ctx, usecase.RegisterInput{Email: "translation-b@example.com", Password: "pw", NativeLang: "fa"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pa, _ := s.Profile(ctx, a.ID)
+	pb, _ := s.Profile(ctx, b.ID)
+	if pa.TranslationLang != "ckb" || pb.TranslationLang != "fa" {
+		t.Fatalf("defaults: %q %q", pa.TranslationLang, pb.TranslationLang)
+	}
+	if _, err := s.UpdateProfile(ctx, b.ID, usecase.UpdateProfileInput{TranslationLang: "ckb"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateProfile(ctx, a.ID, usecase.UpdateProfileInput{TranslationLang: "en"}); err != domain.ErrInvalidTranslationLang {
+		t.Fatalf("invalid translation language: %v", err)
+	}
+	if _, err := s.UpdateProfile(ctx, a.ID, usecase.UpdateProfileInput{TranslationLang: "fa"}); err != nil {
+		t.Fatal(err)
+	}
+	pa, err = s.UpdateProfile(ctx, a.ID, usecase.UpdateProfileInput{DisplayName: "Changed"})
+	if err != nil || pa.TranslationLang != "fa" {
+		t.Fatalf("profile update lost translation choice: %+v %v", pa, err)
+	}
+	pb, _ = s.Profile(ctx, b.ID)
+	if pb.TranslationLang != "ckb" {
+		t.Fatalf("other account changed: %+v", pb)
+	}
+}
+
 // When wired to the languages table, the profile accepts exactly the enabled
 // languages — including ones added by an admin.
 func TestUpdateProfileFollowsLanguageTable(t *testing.T) {

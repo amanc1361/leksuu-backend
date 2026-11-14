@@ -53,6 +53,21 @@ func TestPostgresOnboardingPersistsAndIsolatesAccounts(t *testing.T) {
 	}
 	first := makeUser(1)
 	second := makeUser(2)
+	firstProfile, err := repo.ByID(ctx, first)
+	if err != nil || firstProfile.TranslationLang != "fa" {
+		t.Fatalf("new account translation default: %+v %v", firstProfile, err)
+	}
+	if err := repo.UpdateProfile(ctx, first, domain.ProfileFields{DisplayName: firstProfile.DisplayName, NativeLang: firstProfile.NativeLang, TargetLang: firstProfile.TargetLang, CEFR: firstProfile.CEFR, TranslationLang: "ckb"}); err != nil {
+		t.Fatal(err)
+	}
+	reloadedProfile, err := NewPostgresUserRepo(pool).ByID(ctx, first)
+	if err != nil || reloadedProfile.TranslationLang != "ckb" {
+		t.Fatalf("translation not durable: %+v %v", reloadedProfile, err)
+	}
+	secondProfile, err := repo.ByID(ctx, second)
+	if err != nil || secondProfile.TranslationLang != "fa" {
+		t.Fatalf("translation leaked between accounts: %+v %v", secondProfile, err)
+	}
 	before, err := repo.GetOnboarding(ctx, first)
 	if err != nil || before.Completed {
 		t.Fatalf("new user state: %+v %v", before, err)

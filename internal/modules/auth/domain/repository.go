@@ -5,6 +5,7 @@ import "context"
 // UserRepository abstracts user persistence (impl: repo package).
 type UserRepository interface {
 	OnboardingRepository
+	LearningRecordRepository
 	Create(ctx context.Context, u *User) error
 	ByEmail(ctx context.Context, email string) (*User, error)
 	ByID(ctx context.Context, id string) (*User, error)

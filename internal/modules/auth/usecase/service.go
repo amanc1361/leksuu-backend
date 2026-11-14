@@ -192,10 +192,11 @@ func (s *Service) Logout(ctx context.Context, rawRefresh string) error {
 
 // UpdateProfileInput carries the fields a user may change about themselves.
 type UpdateProfileInput struct {
-	DisplayName string
-	NativeLang  string
-	TargetLang  string
-	CEFR        string
+	DisplayName     string
+	NativeLang      string
+	TranslationLang string
+	TargetLang      string
+	CEFR            string
 }
 
 // UpdateProfile applies non-empty fields to the user and returns the fresh profile.
@@ -204,12 +205,18 @@ func (s *Service) UpdateProfile(ctx context.Context, userID string, in UpdatePro
 	if err != nil {
 		return nil, err
 	}
-	f := domain.ProfileFields{DisplayName: u.DisplayName, NativeLang: u.NativeLang, TargetLang: u.TargetLang, CEFR: u.CEFR}
+	f := domain.ProfileFields{DisplayName: u.DisplayName, NativeLang: u.NativeLang, TranslationLang: u.TranslationLang, TargetLang: u.TargetLang, CEFR: u.CEFR}
 	if in.DisplayName != "" {
 		f.DisplayName = in.DisplayName
 	}
 	if in.NativeLang != "" {
 		f.NativeLang = in.NativeLang
+	}
+	if in.TranslationLang != "" {
+		if in.TranslationLang != "fa" && in.TranslationLang != "ckb" {
+			return nil, domain.ErrInvalidTranslationLang
+		}
+		f.TranslationLang = in.TranslationLang
 	}
 	if in.TargetLang != "" {
 		ok := domain.IsSupportedTargetLang(in.TargetLang)

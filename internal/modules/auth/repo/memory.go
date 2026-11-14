@@ -16,15 +16,16 @@ import (
 // --- users ---
 
 type MemoryUserRepo struct {
-	mu         sync.RWMutex
-	byID       map[string]*domain.User
-	byEmail    map[string]string
-	roles      map[string][]string
-	onboarding map[string]domain.OnboardingState
+	mu              sync.RWMutex
+	byID            map[string]*domain.User
+	byEmail         map[string]string
+	roles           map[string][]string
+	onboarding      map[string]domain.OnboardingState
+	learningRecords map[string]domain.LearningRecord
 }
 
 func NewMemoryUserRepo() *MemoryUserRepo {
-	return &MemoryUserRepo{byID: map[string]*domain.User{}, byEmail: map[string]string{}, roles: map[string][]string{}, onboarding: map[string]domain.OnboardingState{}}
+	return &MemoryUserRepo{byID: map[string]*domain.User{}, byEmail: map[string]string{}, roles: map[string][]string{}, onboarding: map[string]domain.OnboardingState{}, learningRecords: map[string]domain.LearningRecord{}}
 }
 
 func (r *MemoryUserRepo) Create(_ context.Context, u *domain.User) error {
@@ -37,6 +38,14 @@ func (r *MemoryUserRepo) Create(_ context.Context, u *domain.User) error {
 		u.ID = id.New()
 	}
 	cp := *u
+	if cp.TranslationLang == "" {
+		if cp.NativeLang == "ckb" {
+			cp.TranslationLang = "ckb"
+		} else {
+			cp.TranslationLang = "fa"
+		}
+		u.TranslationLang = cp.TranslationLang
+	}
 	r.byID[u.ID] = &cp
 	r.byEmail[u.Email] = u.ID
 	return nil
@@ -146,7 +155,7 @@ func (r *MemoryUserRepo) UpdateProfile(_ context.Context, userID string, p domai
 	if !ok {
 		return domain.ErrUserNotFound
 	}
-	u.DisplayName, u.NativeLang, u.TargetLang, u.CEFR = p.DisplayName, p.NativeLang, p.TargetLang, p.CEFR
+	u.DisplayName, u.NativeLang, u.TargetLang, u.CEFR, u.TranslationLang = p.DisplayName, p.NativeLang, p.TargetLang, p.CEFR, p.TranslationLang
 	return nil
 }
 

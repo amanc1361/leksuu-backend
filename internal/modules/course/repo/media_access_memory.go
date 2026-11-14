@@ -13,7 +13,7 @@ func (r *MemoryCourseRepo) PlaybackItem(_ context.Context, id string) (*domain.L
 	defer r.mu.RUnlock()
 	for _, items := range r.items {
 		for _, it := range items {
-			if it.ID == id && (it.Kind == domain.KindVideo || it.Kind == domain.KindMusic) {
+			if it.ID == id && (it.Kind == domain.KindVideo || it.Kind == domain.KindMusic || it.Kind == domain.KindStory || it.Kind == domain.KindPodcast) {
 				copy := it
 				return &copy, nil
 			}
