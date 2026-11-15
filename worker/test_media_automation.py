@@ -80,7 +80,7 @@ class AutomaticPreparationTest(unittest.TestCase):
 
     def test_automatic_translation_applies_once_and_preserves_human_approvals(self):
         payload = {"published": False, "transcript": [cue()]}
-        result = {"translations": [{"paragraph": 1, "text": "Hello there", "translation": "سلام دوست", "automatic_check": {"passed": True, "independent_model": True}}]}
+        result = {"translations": [{"paragraph": 1, "text": "Hello there", "translation": "سلام دوست", "automatic_check": {"passed": True, "independent_model": True, "calibration": {"passed": True}}}]}
         updated = apply_translations(payload, result, "fa", "job")
         self.assertEqual(updated["translation_status"]["fa"], "auto_approved")
         again = apply_translations(updated, result, "fa", "job")
@@ -142,8 +142,8 @@ class AutomaticPreparationTest(unittest.TestCase):
         payload = accept_source(payload, {"automatic_source_check": source_assessment([cue()], witness(), 10)}, "source-job")
         for language in ("fa", "ckb"):
             payload = apply_translations(payload, {"translations": [{"paragraph": 1, "text": "Hello there",
-                "translation": "سلام دوست", "automatic_check": {"passed": True,
-                "independent_model": True}}]}, language, language + "-job")
+                "translation": {"fa": "سلام دوست", "ckb": "سڵاو هاوڕێ"}[language], "automatic_check": {"passed": True,
+                "independent_model": True, "calibration": {"passed": True}}}]}, language, language + "-job")
         self.assertEqual(automatic_publication_check("podcast", payload), [])
         for key, value in (("auto_publish", False), ("rights_approved", False), ("rights_reference", "")):
             changed = copy.deepcopy(payload)
@@ -153,12 +153,23 @@ class AutomaticPreparationTest(unittest.TestCase):
         changed["transcript"][0]["translation"]["ckb"] = "changed"
         self.assertIn("ckb_verification_required", automatic_publication_check("podcast", changed))
         changed = copy.deepcopy(payload)
+        changed["transcript"][0]["cue_id"] = "new-unique-id"
+        self.assertIn("source_verification_required", automatic_publication_check("podcast", changed))
+        self.assertIn("fa_verification_required", automatic_publication_check("podcast", changed))
+        changed = copy.deepcopy(payload)
+        changed["automation"]["translations"]["fa"]["calibration"] = {"passed": False}
+        self.assertIn("fa_verification_required", automatic_publication_check("podcast", changed))
+        changed = copy.deepcopy(payload)
         changed["transcript"][0]["start"] = 5
         self.assertIn("source_verification_required", automatic_publication_check("podcast", changed))
+        changed = copy.deepcopy(payload)
+        changed["transcript"][0]["end"] = 11
+        self.assertIn("cue_timing_required", automatic_publication_check("podcast", changed))
         changed = copy.deepcopy(payload)
         changed["transcript"].append(copy.deepcopy(changed["transcript"][0]))
         self.assertIn("stable_cue_ids_required", automatic_publication_check("podcast", changed))
         self.assertIn("hls_required", automatic_publication_check("music", payload))
+        self.assertIn("music_vocal_verification_required", automatic_publication_check("music", payload))
 
 
 if __name__ == "__main__":

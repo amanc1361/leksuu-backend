@@ -1,7 +1,8 @@
 ARG PYTHON_BASE=python:3.11-slim-bookworm
 FROM ${PYTHON_BASE}
 
-RUN apt-get -o Acquire::Retries=5 update && apt-get install -y --no-install-recommends libgomp1 ffmpeg \
+RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get -o Acquire::Retries=5 update && apt-get install -y --no-install-recommends libgomp1 ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -12,6 +13,8 @@ COPY worker/leksuu_media_worker.py ./leksuu_media_worker.py
 COPY worker/hls_pipeline.py ./hls_pipeline.py
 COPY worker/job_errors.py ./job_errors.py
 COPY worker/media_automation.py ./media_automation.py
+COPY worker/translation_quality.py ./translation_quality.py
+COPY worker/translation_providers.py ./translation_providers.py
 COPY worker/translation_model_setup.py ./translation_model_setup.py
 
 ENV PYTHONUNBUFFERED=1 MEDIA_JOBS_MODEL_DIR=/models

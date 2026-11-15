@@ -12,6 +12,8 @@ class JobErrorTests(unittest.TestCase):
     def test_preserves_known_errors_and_does_not_expose_exception_details(self):
         self.assertEqual(failure_code(ValueError("translation_model_unavailable"), "translate"),
                          "translation_model_unavailable")
+        self.assertEqual(failure_code(TimeoutError(), "translate"), "provider_timeout")
+        self.assertEqual(failure_code(ConnectionError(), "translate"), "provider_unavailable")
         self.assertEqual(failure_code(MemoryError(), "translate"), "out_of_memory")
         self.assertEqual(failure_code(RuntimeError("secret details"), "translate"), "processing_failed")
         self.assertEqual(failure_code(ValueError("/private/path"), "translate"), "processing_failed")

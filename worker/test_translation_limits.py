@@ -7,6 +7,17 @@ from pathlib import Path
 
 
 class TranslationLimitsTest(unittest.TestCase):
+    def test_long_unpunctuated_cue_keeps_every_word(self):
+        tree = ast.parse(Path(__file__).with_name("leksuu_media_worker.py").read_text(encoding="utf-8"))
+        function = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
+                        and node.name == "translation_chunks")
+        scope = {"re": re}
+        exec(compile(ast.Module(body=[function], type_ignores=[]), "worker", "exec"), scope)
+        source = " ".join(f"word{index}" for index in range(245))
+        chunks = scope["translation_chunks"](source)
+        self.assertEqual([len(chunk.split()) for chunk in chunks], [110, 110, 25])
+        self.assertEqual(" ".join(chunks), source)
+
     def test_episode_translation_preserves_existing_drafts(self):
         tree = ast.parse(Path(__file__).with_name("leksuu_media_worker.py").read_text(encoding="utf-8"))
         functions = [node for node in tree.body if isinstance(node, ast.FunctionDef)

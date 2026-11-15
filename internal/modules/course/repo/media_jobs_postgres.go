@@ -70,6 +70,7 @@ func (r *PostgresMediaJobRepo) Get(ctx context.Context, id string) (*coursedomai
 func (r *PostgresMediaJobRepo) Cancel(ctx context.Context, id string) (*coursedomain.MediaProcessingJob, error) {
 	job, err := scanMediaJob(r.pool.QueryRow(ctx, `UPDATE media_processing_jobs SET
 		cancel_requested=true,status=CASE WHEN status='running' THEN status ELSE 'cancelled' END,
+		progress=CASE WHEN status='running' THEN progress ELSE 0 END,
 		updated_at=now(),events=events||'[{"event":"cancel_requested"}]'::jsonb
 		WHERE id::text=$1 AND status IN ('pending','running','review') RETURNING `+jobColumns, id))
 	if errors.Is(err, coursedomain.ErrItemNotFound) {

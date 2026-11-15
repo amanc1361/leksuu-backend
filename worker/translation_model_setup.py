@@ -100,7 +100,7 @@ def smoke_test(directory):
     import sentencepiece
     tokenizer = sentencepiece.SentencePieceProcessor(model_file=str(directory / "spiece.model"))
     translator = ctranslate2.Translator(str(directory), device="cpu", compute_type="int8",
-                                        inter_threads=1, intra_threads=4)
+                                        inter_threads=1, intra_threads=1)
     for target in ("fa", "ckb"):
         if tokenizer.piece_to_id(f"<2{target}>") == tokenizer.unk_id():
             raise ValueError("unsupported_translation_target: " + target)

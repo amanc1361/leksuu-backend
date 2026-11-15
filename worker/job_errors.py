@@ -3,6 +3,10 @@ import re
 
 
 def failure_code(error, operation):
+    if isinstance(error, TimeoutError):
+        return "provider_timeout"
+    if isinstance(error, ConnectionError):
+        return "provider_unavailable"
     if isinstance(error, MemoryError):
         return "out_of_memory"
     if isinstance(error, ImportError):
