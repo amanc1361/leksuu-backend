@@ -175,6 +175,9 @@ content. No new schema migration is required for this workflow. Queue polling,
 leases, bounded retries, cancellation and checkpoints survive page closure.
 A failed stage stays failed until retried; it is not continuously requeued.
 Edits made while processing cause a conflict instead of being overwritten.
+Transient provider timeouts or connection failures are requeued with a short
+database-backed delay and stop after the third attempt. Validation failures,
+missing models, and source conflicts stay failed for targeted attention.
 
 `MEDIA_JOBS_AUTOMATION_ENABLED=true` is the worker default; set it to `false`
 to retain the older manual workflow. Default recognition uses `small.en` and
@@ -182,10 +185,19 @@ verification uses `medium.en` for English; other languages default to the
 multilingual `small` and `medium` models. Leave `MEDIA_JOBS_WHISPER_MODEL` and
 `MEDIA_JOBS_VERIFICATION_MODEL` empty for language-aware defaults, or override
 them with two different appropriate models. The second pass increases CPU/memory use and latency.
+Set `MEDIA_JOBS_LANGUAGE_DETECTION_MODEL` to a locally available multilingual
+Whisper model. A missing detector or mismatch with the declared source language
+keeps machine source review unresolved; it does not guess a new language or
+invent text. The worker still stores draft transcript evidence for correction.
 `MEDIA_JOBS_RECONCILE_SECONDS` defaults to 30. Prepare both speech models in the
 persistent model volume and install the MADLAD translation model using
 `worker/translation_model_setup.py` before processing real uploads. Missing
 model/dependency errors remain visible instead of passing checks.
+When a draft has verified rights and a reference, the worker can extract a
+supported embedded text subtitle track from Film or Podcast media and compare
+it with the actual audio before accepting timing. The track remains draft
+evidence if recognition or language checks disagree. Existing supplied cues
+take precedence and are not replaced by embedded subtitles.
 
 New Film, Music, and Podcast uploads can create a queued draft immediately after
 the file upload. Automatic publication is disabled by default with
@@ -196,10 +208,33 @@ translations, and HLS for Film/Music. Configure a **distinct** local CTranslate2
 model at `MEDIA_JOBS_TRANSLATION_VERIFICATION_MODEL_DIR` for the backtranslation
 check; it must support English as a target and must not be the production
 translation model directory. Without it, generated translations stay drafts.
-The roundtrip/script check cannot prove idioms or Sorani fluency, so enable
-publication only after independent reference-fixture evaluation of the selected
-models and staging acceptance. Failed checks leave a recorded unpublished
+Machine approval additionally requires `MEDIA_JOBS_TRANSLATION_REFERENCE_FILE`,
+a read-only JSON file with `version: 1`,
+`provenance: "independent_editorial_reference"`, and at least 12 distinct
+English `source` cases each containing independently prepared `fa` and `ckb`
+references. The worker evaluates the configured model against each language's
+references; missing, weak, or malformed evidence leaves translations as drafts.
+`MEDIA_JOBS_TRANSLATION_CUE_ATTEMPTS` bounds targeted regeneration to 1–3
+attempts (default 2), preserving human and imported drafts. Roundtrip/script
+and reference checks cannot guarantee idioms or Sorani fluency, so enable
+publication only after broader staging evaluation of the selected models.
+`MEDIA_JOBS_TRANSLATION_INTRA_THREADS` defaults to 1 and is clamped to 1–4;
+larger values can need substantially more RAM while loading MADLAD on CPU.
+Failed checks leave a recorded unpublished
 exception. No worker infers media publication rights from a file upload.
+
+`MEDIA_JOBS_TRANSLATION_PROVIDER` defaults to `local`. Optional `google` and
+`azure` draft providers require `MEDIA_JOBS_CLOUD_TRANSLATION_ALLOWED=true`, a
+positive `MEDIA_JOBS_CLOUD_MAX_CHARS_PER_JOB`, explicit credentials, and item
+rights approval/reference. Google uses `ckb`; Azure uses its documented Central
+Kurdish `ku` text-translation code. The generic `ku` detector label never
+establishes Sorani source identity. Cloud responses remain drafts because
+their independent quality calibration has not been established. Each request
+is limited to 4,000 characters with a 15-second timeout and configurable
+minimum spacing; transient failures use the existing bounded job retry.
+`MEDIA_JOBS_TRANSLATION_MACHINE_APPROVAL_ENABLED` defaults to `false` while
+Phase 2D quality thresholds lack an independently reviewed domain benchmark.
+Generated text remains a draft even when other technical checks succeed.
 
 Set `MEDIA_PUBLIC_URL` to the public site origin so the worker can map stored
 URLs to `http://api:8080`; external media origins are rejected. The `media-models`

@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from leksuu_media_worker import align, exact_word_timing, merge_synchronization, needs_story_synchronization, process
+from leksuu_media_worker import align, detect_spoken_language, exact_word_timing, merge_synchronization, needs_story_synchronization, process
 
 
 def witness(*entries):
@@ -16,6 +16,33 @@ def witness(*entries):
 
 
 class AlignmentTest(unittest.TestCase):
+    def test_language_detection_requires_multilingual_model_and_confidence(self):
+        from types import SimpleNamespace
+        self.assertFalse(detect_spoken_language("unused.mp3", "en")["passed"])
+        with patch("leksuu_media_worker.WhisperModel", side_effect=OSError("not installed")), \
+             patch.dict("os.environ", {"MEDIA_JOBS_LANGUAGE_DETECTION_MODEL": "missing-multilingual"}):
+            self.assertEqual(detect_spoken_language("unused.mp3", "en")["reason"],
+                             "language_detection_model_unavailable")
+        class Model:
+            def transcribe(self, *_args, **_kwargs):
+                return iter(()), SimpleNamespace(language="en", language_probability=.91)
+        with patch("leksuu_media_worker.LANGUAGE_MODEL", Model()), \
+             patch("leksuu_media_worker.LANGUAGE_MODEL_NAME", "test-multilingual"), \
+             patch.dict("os.environ", {"MEDIA_JOBS_LANGUAGE_DETECTION_MODEL": "test-multilingual"}), \
+             patch("leksuu_media_worker.decode_audio", return_value=[1] * 16000):
+            self.assertTrue(detect_spoken_language("unused.mp3", "en")["passed"])
+            self.assertFalse(detect_spoken_language("unused.mp3", "fa")["passed"])
+        class GenericKurdishModel:
+            def transcribe(self, *_args, **_kwargs):
+                return iter(()), SimpleNamespace(language="ku", language_probability=.99)
+        with patch("leksuu_media_worker.LANGUAGE_MODEL", GenericKurdishModel()), \
+             patch("leksuu_media_worker.LANGUAGE_MODEL_NAME", "test-multilingual"), \
+             patch.dict("os.environ", {"MEDIA_JOBS_LANGUAGE_DETECTION_MODEL": "test-multilingual"}), \
+             patch("leksuu_media_worker.decode_audio", return_value=[1] * 16000):
+            result = detect_spoken_language("unused.mp3", "ckb")
+            self.assertFalse(result["passed"])
+            self.assertEqual(result["detected"], "ku")
+
     def test_full_recording_chunks_keep_late_lyrics_without_vad(self):
         from types import SimpleNamespace
         from leksuu_media_worker import transcribe
@@ -58,6 +85,33 @@ class AlignmentTest(unittest.TestCase):
             result = transcribe("unused.mp3", "en")
         self.assertEqual([(line["start"], line["end"]) for line in result["segments"]],
                          [(1, 3.5), (40, 42.5)])
+
+    def test_asr_window_checkpoint_resumes_without_reprocessing_completed_audio(self):
+        from types import SimpleNamespace
+        from leksuu_media_worker import transcribe
+        class Audio:
+            def __len__(self): return 125 * 16000
+            def __getitem__(self, key): return key
+        calls = []
+        class Model:
+            def transcribe(self, audio, **_options):
+                calls.append(audio)
+                return iter([SimpleNamespace(words=[SimpleNamespace(
+                    start=4, end=5, word=" Hello", probability=.95)])]), None
+        checkpoints = []
+        def interrupt_after_first(checkpoint):
+            checkpoints.append(checkpoint)
+            raise RuntimeError("worker stopped")
+        with patch("leksuu_media_worker.MODEL", Model()), \
+             patch("leksuu_media_worker.MODEL_NAME", "test-model"), \
+             patch.dict("os.environ", {"MEDIA_JOBS_WHISPER_MODEL": "test-model"}), \
+             patch("leksuu_media_worker.decode_audio", return_value=Audio()):
+            with self.assertRaisesRegex(RuntimeError, "worker stopped"):
+                transcribe("unused.mp3", "en", on_window=interrupt_after_first)
+            resumed = transcribe("unused.mp3", "en", checkpoint=checkpoints[0])
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(resumed["completed_windows"], 3)
+        self.assertEqual([line["start"] for line in resumed["segments"]], [4, 62, 122])
 
     def test_story_reconciliation_requires_exact_word_timing_once(self):
         payload = {"url": "/media/story.mp3", "language": "en", "audio_sha256": "a" * 64,
@@ -165,6 +219,36 @@ class AlignmentTest(unittest.TestCase):
         self.assertEqual(updated["transcript"][0]["start"], 1.0)
         self.assertEqual(updated["alignment_version"], 2)
         self.assertEqual(updated["timing_status"], "ready")
+
+    def test_authorized_embedded_cues_keep_original_timing_after_asr_comparison(self):
+        payload = {"url": "http://local.invalid/media/film.mp4", "language": "en",
+                   "rights_approved": True, "rights_reference": "fixture-license", "transcript": []}
+        job = {"id": "job", "item_id": "item", "kind": "video", "operation": "synchronize",
+               "payload_snapshot": payload, "result": None}
+        class Connection:
+            def __enter__(self): return self
+            def __exit__(self, *_): return False
+            def execute(self, statement, *_):
+                if statement.startswith("SELECT"):
+                    class Row:
+                        def fetchone(self): return {"kind": "video", "payload": payload}
+                    return Row()
+                return None
+        spoken = witness(("Hello", 1.0, 1.3), ("there", 1.4, 1.9))
+        spoken["segments"][0].update(start=1.0, end=1.9)
+        with patch("leksuu_media_worker.db", return_value=Connection()), \
+             patch("leksuu_media_worker.fetch_original", return_value=(Path("unused.mp4"), "a" * 64)), \
+             patch("leksuu_media_worker.audio_duration", return_value=4.0), \
+             patch("leksuu_media_worker.opening_sound_onset", return_value=0.0), \
+             patch("leksuu_media_worker.transcribe", return_value=spoken), \
+             patch("leksuu_media_worker.automation_enabled", return_value=False), \
+             patch("leksuu_media_worker.extract_embedded_subtitles", return_value=(
+                 [{"text": "Hello there", "start": .8, "end": 2.0}],
+                 {"method": "embedded_subtitle_track", "stream_index": 2})):
+            result = process(job)
+        self.assertEqual(result["method"], "embedded_subtitles_verified_with_asr")
+        self.assertEqual(result["subtitle_provenance"]["stream_index"], 2)
+        self.assertEqual((result["cues"][0]["start"], result["cues"][0]["end"]), (.8, 2.0))
 
 
 if __name__ == "__main__":

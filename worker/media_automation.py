@@ -10,7 +10,7 @@ import json
 import math
 import re
 
-VERSION = 1
+VERSION = 2
 ACCEPTED = {"approved", "auto_approved"}
 
 
@@ -35,7 +35,8 @@ def translation_hash(payload):
 
 
 def translation_input(payload, language):
-    return [{"text": cue.get("text", ""), "translation": cue.get("translation", {}).get(language, "")}
+    return [{"cue_id": cue.get("cue_id"), "text": cue.get("text", ""),
+             "translation": cue.get("translation", {}).get(language, "")}
             for cue in (payload.get("transcript") or [])]
 
 
@@ -44,7 +45,7 @@ def media_source(payload):
 
 
 def source_input(payload):
-    return [{key: cue.get(key) for key in ("text", "start", "end")}
+    return [{key: cue.get(key) for key in ("cue_id", "text", "start", "end")}
             for cue in (payload.get("transcript") or [])]
 
 
@@ -105,17 +106,23 @@ def source_assessment(cues, witness, duration):
         issues.append({"paragraph": nearest + 1, "reasons": ["possible_missing_words"],
                        "candidate_start": missing[0][1], "candidate_end": missing[-1][2]})
     return {"version": VERSION, "issues": issues, "passed": bool(cues) and not issues,
-            "verification_model": witness.get("model", "")}
+            "verification_model": witness.get("model", ""), "duration_seconds": duration}
 
 
-def translation_assessment(source, translation, backtranslation, independent=False):
+def translation_assessment(source, translation, backtranslation, independent=False, target=None):
     original, restored = tokens(source), tokens(backtranslation)
     score = difflib.SequenceMatcher(None, original, restored, autojunk=False).ratio()
     letters = [c for c in translation if c.isalpha()]
     script = sum("\u0600" <= c <= "\u08ff" for c in letters) / max(1, len(letters))
-    return {"passed": bool(independent) and bool(original) and bool(restored) and score >= .85 and script >= .7,
+    from translation_quality import candidate_risks
+    risks = candidate_risks(source, translation, target, backtranslation) if target else []
+    reason = ("independent_verification_unavailable" if not independent else
+              "wrong_script" if script < .7 else
+              risks[0] if risks else
+              "roundtrip_mismatch" if score < .85 or not original or not restored else "")
+    return {"passed": not reason,
             "roundtrip_similarity": round(score, 4), "method": "independent_roundtrip_and_script_v2",
-            "independent_model": bool(independent)}
+            "independent_model": bool(independent), "reason": reason, "risks": risks}
 
 
 def automatic_publication_check(kind, payload):
@@ -135,9 +142,16 @@ def automatic_publication_check(kind, payload):
     if (not source.get("passed") or source.get("issues") or not source.get("verification_model") or
             source.get("input") != source_input(payload) or payload.get("alignment_source") != identity(payload)):
         issues.append("source_verification_required")
+    # A second ordinary speech recognizer is not independent evidence that
+    # vocals were recovered through instruments or repeated choruses.
+    if kind == "music" and source.get("music_vocal_verification") != "passed":
+        issues.append("music_vocal_verification_required")
     cues = payload.get("transcript") or []
     if not cues:
         issues.append("source_cues_required")
+    duration = payload.get("media_duration_seconds")
+    if not isinstance(duration, (int, float)) or not math.isfinite(duration) or duration <= 0:
+        issues.append("verified_duration_required")
     previous = 0
     seen = set()
     for cue in cues:
@@ -147,7 +161,8 @@ def automatic_publication_check(kind, payload):
             issues.append("stable_cue_ids_required")
         seen.add(cue_id)
         if (not all(isinstance(value, (int, float)) and math.isfinite(value) for value in (start, end)) or
-                not previous <= start < end):
+                not previous <= start < end or
+                (isinstance(duration, (int, float)) and math.isfinite(duration) and end > duration + .3)):
             issues.append("cue_timing_required")
         else:
             previous = end
@@ -156,9 +171,15 @@ def automatic_publication_check(kind, payload):
             issues.append("cue_source_approval_required")
         if kind != "podcast" and cue.get("exercise_review") != "auto_approved":
             issues.append("exercise_approval_required")
+        translations = cue.get("translation") or {}
+        if translations.get("fa") and translations.get("ckb") and \
+                translations["fa"].strip() == translations["ckb"].strip():
+            issues.append("language_substitution_suspected")
     for language in ("fa", "ckb"):
         check = (report.get("translations") or {}).get(language) or {}
-        if (not check.get("passed") or check.get("issues") or check.get("input") != translation_input(payload, language) or
+        if (not check.get("passed") or check.get("issues") or
+                not (check.get("calibration") or {}).get("passed") or
+                check.get("input") != translation_input(payload, language) or
                 payload.get("translation_status", {}).get(language) != "auto_approved"):
             issues.append(language + "_verification_required")
         for cue in cues:
@@ -191,7 +212,8 @@ def accept_source(payload, result, job_id):
     assessment["passed"] = bool(passed)
     report = updated.setdefault("automation", {})
     report.update({"version": VERSION, "source": assessment, "source_job_id": str(job_id)})
-    assessment["input"] = source_input(updated)
+    if isinstance(assessment.get("duration_seconds"), (int, float)) and math.isfinite(assessment["duration_seconds"]):
+        updated["media_duration_seconds"] = assessment["duration_seconds"]
     report.pop("translations", None)
     global_issue = any(not issue.get("paragraph") for issue in assessment["issues"])
     blocked = {issue["paragraph"] for issue in assessment["issues"] if issue.get("paragraph")}
@@ -211,6 +233,7 @@ def accept_source(payload, result, job_id):
             cue["exercise_review"] = "draft"
         if cue != before:
             cue["review_revision"] = cue.get("review_revision", 0) + 1
+    assessment["input"] = source_input(updated)
     updated["alignment_source"] = identity(updated)
     return updated
 
@@ -222,7 +245,9 @@ def apply_translations(payload, result, language, job_id):
     issues = []
     for row in result.get("translations", []):
         index = row["paragraph"] - 1
-        if index < 0 or index >= len(cues) or index in seen or cues[index].get("text") != row["text"] or not row.get("translation", "").strip():
+        if index < 0 or index >= len(cues) or index in seen or cues[index].get("text") != row["text"] or \
+                (row.get("cue_id") and cues[index].get("cue_id") != row["cue_id"]) or \
+                not row.get("translation", "").strip():
             raise ValueError("translation_source_changed")
         seen.add(index)
         cue = cues[index]
@@ -230,25 +255,42 @@ def apply_translations(payload, result, language, job_id):
         translations = cue.setdefault("translation", {})
         review = cue.setdefault("translation_review", {})
         existing = translations.get(language, "").strip()
-        if existing and existing != row["translation"]:
+        if existing and existing != row["translation"] and not (
+                review.get(language) == "draft" and
+                (cue.get("translation_origin") or {}).get(language) == "machine" and
+                updated.get("published") is False):
             raise ValueError("translation_would_overwrite_existing")
         if review.get(language) == "approved":
             continue
         translations[language] = row["translation"]
+        if row.get("generated_by_worker"):
+            cue.setdefault("translation_origin", {})[language] = "machine"
         quality = row.get("automatic_check") or {"passed": False}
-        independently_verified = quality.get("passed") is True and quality.get("independent_model") is True
+        from translation_quality import candidate_risks
+        candidate_issues = candidate_risks(row["text"], row["translation"], language)
+        if candidate_issues:
+            quality = {**quality, "passed": False, "reason": candidate_issues[0], "risks": candidate_issues}
+        independently_verified = (quality.get("passed") is True and quality.get("independent_model") is True and
+                                  (quality.get("calibration") or {}).get("passed") is True)
+        other_language = "ckb" if language == "fa" else "fa"
+        if translations[language].strip() == str(translations.get(other_language) or "").strip():
+            independently_verified = False
+            quality = {**quality, "reason": "language_substitution_suspected"}
         review[language] = "auto_approved" if independently_verified else "draft"
         if cue != before:
             cue["review_revision"] = cue.get("review_revision", 0) + 1
         if not independently_verified:
-            issues.append({"paragraph": index + 1, "reasons": ["translation_check_failed"]})
+            issues.append({"paragraph": index + 1, "reasons": [quality.get("reason") or "translation_check_failed"]})
     for i, cue in enumerate(cues):
         if not cue.get("translation", {}).get(language) or cue.get("translation_review", {}).get(language) not in ACCEPTED:
             if not any(issue["paragraph"] == i + 1 for issue in issues):
                 issues.append({"paragraph": i + 1, "reasons": ["translation_check_failed"]})
     updated.setdefault("translation_status", {})[language] = "auto_approved" if not issues else "draft"
+    calibrations = [(row.get("automatic_check") or {}).get("calibration") or {} for row in result.get("translations", [])]
+    calibration = calibrations[0] if calibrations and all(check == calibrations[0] for check in calibrations) else {"passed": False}
     updated.setdefault("automation", {}).setdefault("translations", {})[language] = {
         "version": VERSION, "job_id": str(job_id), "issues": issues, "passed": not issues,
+        "calibration": calibration,
         "input": translation_input(updated, language)}
     review = updated.get("review")
     if isinstance(review, dict) and updated.get("automation", {}).get("source", {}).get("passed") and all(
