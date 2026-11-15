@@ -22,7 +22,8 @@ from pathlib import Path
 
 from hls_pipeline import run_ffmpeg, upload_hls
 from media_automation import (next_stage, source_assessment, translation_assessment,
-                              accept_source, apply_translations, translation_hash, media_source)
+                              accept_source, apply_translations, translation_hash, media_source,
+                              automatic_publication_check)
 
 sys.path.insert(0, str(Path(tempfile.gettempdir()) / "leksuu-align-pydeps"))
 import av  # noqa: E402
@@ -46,6 +47,7 @@ MODEL = None
 MODEL_NAME = None
 TRANSLATOR = None
 TRANSLATION_TOKENIZER = None
+VERIFICATION_TRANSLATORS = {}
 ALIGNMENT_VERSION = 2
 
 
@@ -122,6 +124,46 @@ def reconcile_story_jobs():
 
 def automation_enabled():
     return os.environ.get("MEDIA_JOBS_AUTOMATION_ENABLED", "true").lower() in ("true", "1", "yes")
+
+
+def automatic_publication_enabled():
+    return os.environ.get("MEDIA_JOBS_AUTO_PUBLICATION_ENABLED", "false").lower() in ("true", "1", "yes")
+
+
+def reconcile_automatic_publication():
+    """Publish only explicit opt-ins with current evidence in one locked transaction."""
+    if not automation_enabled() or not automatic_publication_enabled():
+        return 0
+    published = 0
+    with db() as connection:
+        rows = connection.execute("""SELECT id,kind,payload FROM lesson_items
+            WHERE kind IN ('video','music','podcast') AND payload->>'published'='false'
+              AND payload->>'auto_publish'='true' FOR UPDATE SKIP LOCKED""").fetchall()
+        for row in rows:
+            active = connection.execute("""SELECT 1 FROM media_processing_jobs
+                WHERE item_id=%s AND status IN ('pending','running') LIMIT 1""", (row["id"],)).fetchone()
+            if active:
+                continue
+            payload = row["payload"]
+            issues = automatic_publication_check(row["kind"], payload)
+            previous = (payload.get("automation") or {}).get("publication") or {}
+            if issues:
+                decision = {"decision": "exception_requires_attention", "issues": issues}
+                if previous != decision:
+                    payload.setdefault("automation", {})["publication"] = decision
+                    connection.execute("UPDATE lesson_items SET payload=%s WHERE id=%s AND payload->>'published'='false'",
+                                       (Jsonb(payload), row["id"]))
+                continue
+            payload.setdefault("automation", {})["publication"] = {
+                "decision": "approved_automatically", "policy": "verified_media_v1",
+                "source_job_id": payload["automation"].get("source_job_id"),
+                "translation_job_ids": {language: payload["automation"]["translations"][language]["job_id"]
+                                        for language in ("fa", "ckb")}}
+            payload["published"] = True
+            connection.execute("UPDATE lesson_items SET payload=%s WHERE id=%s AND payload->>'published'='false'",
+                               (Jsonb(payload), row["id"]))
+            published += 1
+    return published
 
 
 def reconcile_media_jobs():
@@ -348,10 +390,23 @@ def translation_source(payload):
             "transcript": [cue.get("text", "") for cue in (payload.get("transcript") or [])]}
 
 
-def translation_model():
+def translation_model(model_dir=None):
     global TRANSLATOR, TRANSLATION_TOKENIZER
+    root = Path(model_dir or os.environ.get("MEDIA_JOBS_TRANSLATION_MODEL_DIR", ""))
+    if model_dir is not None:
+        key = str(root.resolve())
+        if key in VERIFICATION_TRANSLATORS:
+            return VERIFICATION_TRANSLATORS[key]
+        if not root.is_dir() or not (root / "model.bin").is_file() or not (root / "spiece.model").is_file():
+            raise ValueError("independent_translation_model_unavailable")
+        import ctranslate2
+        import sentencepiece
+        VERIFICATION_TRANSLATORS[key] = (
+            ctranslate2.Translator(str(root), device="cpu", compute_type="int8",
+                                  inter_threads=1, intra_threads=4),
+            sentencepiece.SentencePieceProcessor(model_file=str(root / "spiece.model")))
+        return VERIFICATION_TRANSLATORS[key]
     if TRANSLATOR is None:
-        root = Path(os.environ.get("MEDIA_JOBS_TRANSLATION_MODEL_DIR", ""))
         if not root.is_dir() or not (root / "model.bin").is_file() or not (root / "spiece.model").is_file():
             raise ValueError("translation_model_unavailable")
         import ctranslate2
@@ -378,8 +433,8 @@ def translation_chunks(text):
     return chunks
 
 
-def translate_text(text, target):
-    translator, tokenizer = translation_model()
+def translate_text(text, target, model_dir=None):
+    translator, tokenizer = translation_model(model_dir)
     if tokenizer.piece_to_id(f"<2{target}>") == tokenizer.unk_id():
         raise ValueError("unsupported_translation_target")
     output = []
@@ -428,9 +483,13 @@ def process_translation(job, current):
         if not cue.get("text", "").strip():
             raise ValueError("translation_source_missing")
         value = existing or translate_text(cue["text"], target)
-        check = {"passed": False, "reason": "unsupported_source_language"}
+        check = {"passed": False, "reason": "independent_verification_unavailable"}
         if automatic and current.get("language", "en") == "en":
-            check = translation_assessment(cue["text"], value, translate_text(value, "en"))
+            verifier = os.environ.get("MEDIA_JOBS_TRANSLATION_VERIFICATION_MODEL_DIR", "").strip()
+            primary = os.environ.get("MEDIA_JOBS_TRANSLATION_MODEL_DIR", "").strip()
+            if verifier and primary and Path(verifier).resolve() != Path(primary).resolve():
+                check = translation_assessment(cue["text"], value,
+                                               translate_text(value, "en", verifier), independent=True)
         translated.append({"paragraph": index, "text": cue["text"],
                            "translation": value, "automatic_check": check})
         with db() as connection:
@@ -751,8 +810,10 @@ def main():
     if args.once:
         reconcile_media_jobs() if automation_enabled() else reconcile_story_jobs()
         run_once(worker_id)
+        reconcile_automatic_publication()
         return
     reconcile_media_jobs() if automation_enabled() else reconcile_story_jobs()
+    reconcile_automatic_publication()
     interval = max(5, int(os.environ.get("MEDIA_JOBS_RECONCILE_SECONDS", "30")))
     next_reconcile = time.monotonic() + interval
     while True:
@@ -762,6 +823,7 @@ def main():
         if worked or time.monotonic() >= next_reconcile:
             try:
                 reconcile_media_jobs() if automation_enabled() else reconcile_story_jobs()
+                reconcile_automatic_publication()
             except Exception as exc:
                 print(json.dumps({"event": "story_reconciliation_failed", "error": type(exc).__name__}), flush=True)
             next_reconcile = time.monotonic() + interval

@@ -108,13 +108,69 @@ def source_assessment(cues, witness, duration):
             "verification_model": witness.get("model", "")}
 
 
-def translation_assessment(source, translation, backtranslation):
+def translation_assessment(source, translation, backtranslation, independent=False):
     original, restored = tokens(source), tokens(backtranslation)
     score = difflib.SequenceMatcher(None, original, restored, autojunk=False).ratio()
     letters = [c for c in translation if c.isalpha()]
     script = sum("\u0600" <= c <= "\u08ff" for c in letters) / max(1, len(letters))
-    return {"passed": bool(original) and bool(restored) and score >= .85 and script >= .7,
-            "roundtrip_similarity": round(score, 4), "method": "roundtrip_and_script_v1"}
+    return {"passed": bool(independent) and bool(original) and bool(restored) and score >= .85 and script >= .7,
+            "roundtrip_similarity": round(score, 4), "method": "independent_roundtrip_and_script_v2",
+            "independent_model": bool(independent)}
+
+
+def automatic_publication_check(kind, payload):
+    """Fail closed on stale evidence, uncertain cues, rights, and missing opt-in."""
+    issues = []
+    if kind not in ("video", "music", "podcast") or payload.get("published") is not False:
+        issues.append("unsupported_or_published")
+    if payload.get("auto_publish") is not True:
+        issues.append("owner_opt_in_required")
+    if payload.get("rights_approved") is not True or not str(payload.get("rights_reference") or "").strip():
+        issues.append("rights_required")
+    if kind in ("video", "music") and (not str(payload.get("hls_manifest_key") or "").startswith("hls/") or
+                                       payload.get("hls_source") != media_source(payload)):
+        issues.append("hls_required")
+    report = payload.get("automation") or {}
+    source = report.get("source") or {}
+    if (not source.get("passed") or source.get("issues") or not source.get("verification_model") or
+            source.get("input") != source_input(payload) or payload.get("alignment_source") != identity(payload)):
+        issues.append("source_verification_required")
+    cues = payload.get("transcript") or []
+    if not cues:
+        issues.append("source_cues_required")
+    previous = 0
+    seen = set()
+    for cue in cues:
+        start, end = cue.get("start"), cue.get("end")
+        cue_id = cue.get("cue_id")
+        if not cue_id or cue_id in seen:
+            issues.append("stable_cue_ids_required")
+        seen.add(cue_id)
+        if (not all(isinstance(value, (int, float)) and math.isfinite(value) for value in (start, end)) or
+                not previous <= start < end):
+            issues.append("cue_timing_required")
+        else:
+            previous = end
+        if not tokens(cue.get("text", "")) or cue.get("timing_status") != "auto_approved" or \
+                (cue.get("editorial_review") or {}).get("decision") != "auto_approved":
+            issues.append("cue_source_approval_required")
+        if kind != "podcast" and cue.get("exercise_review") != "auto_approved":
+            issues.append("exercise_approval_required")
+    for language in ("fa", "ckb"):
+        check = (report.get("translations") or {}).get(language) or {}
+        if (not check.get("passed") or check.get("issues") or check.get("input") != translation_input(payload, language) or
+                payload.get("translation_status", {}).get(language) != "auto_approved"):
+            issues.append(language + "_verification_required")
+        for cue in cues:
+            if (not str((cue.get("translation") or {}).get(language) or "").strip() or
+                    (cue.get("translation_review") or {}).get(language) != "auto_approved"):
+                issues.append(language + "_cue_approval_required")
+    review = payload.get("review")
+    if isinstance(review, dict) and (review.get("quality_review") != "auto_approved" or
+                                     review.get("audio_transcript_match_verified") is not True or
+                                     review.get("rights_approved") is not True):
+        issues.append("publication_review_required")
+    return sorted(set(issues))
 
 
 def accept_source(payload, result, job_id):
@@ -180,10 +236,11 @@ def apply_translations(payload, result, language, job_id):
             continue
         translations[language] = row["translation"]
         quality = row.get("automatic_check") or {"passed": False}
-        review[language] = "auto_approved" if quality.get("passed") else "draft"
+        independently_verified = quality.get("passed") is True and quality.get("independent_model") is True
+        review[language] = "auto_approved" if independently_verified else "draft"
         if cue != before:
             cue["review_revision"] = cue.get("review_revision", 0) + 1
-        if not quality.get("passed"):
+        if not independently_verified:
             issues.append({"paragraph": index + 1, "reasons": ["translation_check_failed"]})
     for i, cue in enumerate(cues):
         if not cue.get("translation", {}).get(language) or cue.get("translation_review", {}).get(language) not in ACCEPTED:

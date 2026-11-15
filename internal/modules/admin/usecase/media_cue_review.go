@@ -36,7 +36,7 @@ func (s *Service) ReviewMediaCue(ctx context.Context, itemID string, in MediaCue
 	if err != nil {
 		return err
 	}
-	if item.Kind != "video" && item.Kind != "music" {
+	if item.Kind != "video" && item.Kind != "music" && item.Kind != "podcast" {
 		return apperr.ErrBadRequest
 	}
 	var payload map[string]json.RawMessage

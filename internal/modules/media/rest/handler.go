@@ -271,11 +271,24 @@ func NewHandler(svc *usecase.Service, maxBytes int64) *Handler {
 
 // Upload accepts a multipart "file" field and stores it in object storage.
 func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, h.maxBytes+(1<<20))
+	// The browser routes larger files through signed S3 parts. Bound direct
+	// uploads independently of the worker's much larger media size allowance.
+	const directUploadMaxBytes int64 = 32 << 20
+	limit := directUploadMaxBytes
+	if h.maxBytes > 0 && h.maxBytes < limit {
+		limit = h.maxBytes
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, limit+(1<<20))
 	if err := r.ParseMultipartForm(8 << 20); err != nil {
-		web.Error(w, r, apperr.ErrBadRequest)
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			web.Error(w, r, apperr.New("media.too_large", apperr.KindValidation))
+		} else {
+			web.Error(w, r, apperr.ErrBadRequest)
+		}
 		return
 	}
+	defer r.MultipartForm.RemoveAll()
 	file, hdr, err := r.FormFile("file")
 	if err != nil {
 		web.Error(w, r, apperr.ErrBadRequest)
@@ -285,6 +298,10 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 	data, err := io.ReadAll(file)
 	if err != nil {
 		web.Error(w, r, apperr.ErrBadRequest)
+		return
+	}
+	if int64(len(data)) > limit {
+		web.Error(w, r, apperr.New("media.too_large", apperr.KindValidation))
 		return
 	}
 	ct := hdr.Header.Get("Content-Type")

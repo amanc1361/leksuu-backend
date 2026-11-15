@@ -57,7 +57,7 @@ func guardImportedMutation(existing, replacement json.RawMessage) error {
 		return apperr.ErrBadRequest
 	}
 	if before["source_id"] == nil {
-		return nil
+		return guardPublication(existing, replacement)
 	}
 	for _, key := range []string{"source_id", "source_url", "audio_sha256", "url", "transcript", "translation_status", "review"} {
 		if !reflect.DeepEqual(before[key], after[key]) {
@@ -91,16 +91,33 @@ func guardPublication(existing, replacement json.RawMessage) error {
 	if json.Unmarshal(existing, &before) != nil || json.Unmarshal(replacement, &after) != nil {
 		return apperr.ErrBadRequest
 	}
-	if !before.Published && after.Published && (before.MediaKind == "music" || before.MediaKind == "video") {
-		if !before.RightsApproved || before.RightsReference == "" || len(before.Transcript) == 0 ||
-			!strings.HasPrefix(before.HLSManifestKey, "hls/") || path.Base(before.HLSManifestKey) != "master.m3u8" {
+	if before.Published && after.Published && (before.MediaKind == "music" || before.MediaKind == "video" || before.MediaKind == "podcast") {
+		var oldFields, newFields map[string]any
+		if json.Unmarshal(existing, &oldFields) != nil || json.Unmarshal(replacement, &newFields) != nil {
+			return apperr.ErrBadRequest
+		}
+		for _, key := range []string{"url", "transcript", "rights_approved", "rights_reference", "hls_manifest_key", "translation_status", "review"} {
+			if !reflect.DeepEqual(oldFields[key], newFields[key]) {
+				return ErrMediaPublicationReview
+			}
+		}
+	}
+	if !before.Published && after.Published && (before.MediaKind == "music" || before.MediaKind == "video" || before.MediaKind == "podcast") {
+		if !before.RightsApproved || strings.TrimSpace(before.RightsReference) == "" || len(before.Transcript) == 0 {
+			return ErrMediaPublicationReview
+		}
+		if (before.MediaKind == "music" || before.MediaKind == "video") &&
+			(!strings.HasPrefix(before.HLSManifestKey, "hls/") || path.Base(before.HLSManifestKey) != "master.m3u8") {
 			return ErrMediaPublicationReview
 		}
 		for _, cue := range before.Transcript {
-			if cue.CueID == "" || cue.Start == nil || cue.End == nil || *cue.End <= *cue.Start ||
+			if cue.CueID == "" || cue.Start == nil || cue.End == nil || *cue.Start < 0 || *cue.End <= *cue.Start ||
 				!acceptedMediaReview(cue.TimingStatus) || !acceptedMediaReview(cue.EditorialReview.Decision) ||
-				!acceptedMediaReview(cue.ExerciseReview) || !acceptedMediaReview(cue.TranslationReview["fa"]) ||
+				!acceptedMediaReview(cue.TranslationReview["fa"]) ||
 				!acceptedMediaReview(cue.TranslationReview["ckb"]) || cue.Translation["fa"] == "" || cue.Translation["ckb"] == "" {
+				return ErrMediaPublicationReview
+			}
+			if before.MediaKind != "podcast" && !acceptedMediaReview(cue.ExerciseReview) {
 				return ErrMediaPublicationReview
 			}
 		}

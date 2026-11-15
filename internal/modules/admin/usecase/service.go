@@ -543,6 +543,7 @@ type MediaCue struct {
 	Start        *float64          `json:"start,omitempty"`
 	End          *float64          `json:"end,omitempty"`
 	Text         string            `json:"text"`
+	Speaker      string            `json:"speaker,omitempty"`
 	Translation  map[string]string `json:"translation,omitempty"`
 	TimingStatus string            `json:"timing_status,omitempty"`
 	CueID        string            `json:"cue_id,omitempty"`
@@ -559,6 +560,7 @@ type MediaWordTiming struct {
 // ImportMediaInput stages standalone media as a draft.
 type ImportMediaInput struct {
 	Kind            string
+	AutoPublish     bool
 	Title           string
 	Artist          string
 	AudioLanguage   string
@@ -589,6 +591,10 @@ func (s *Service) ImportMedia(ctx context.Context, in ImportMediaInput) (*course
 		(kind != coursedomain.KindStory && strings.TrimSpace(in.URL) == "") {
 		return nil, apperr.ErrBadRequest
 	}
+	if err := validateMediaCues(in.Transcript); err != nil {
+		return nil, err
+	}
+	ensureMediaCueIDs(in.Transcript)
 	lessonID, err := s.ensureMediaLesson(ctx)
 	if err != nil {
 		return nil, err
@@ -604,6 +610,7 @@ func (s *Service) ImportMedia(ctx context.Context, in ImportMediaInput) (*course
 		"media_kind":       kind,
 		"rights_reference": strings.TrimSpace(in.RightsReference),
 		"rights_approved":  in.RightsApproved,
+		"auto_publish":     in.AutoPublish && kind != coursedomain.KindStory,
 		"language":         lang,
 		"level":            strings.TrimSpace(in.CEFR),
 		"level_verified":   in.LevelVerified,
@@ -638,6 +645,9 @@ func (s *Service) UpdateMedia(ctx context.Context, itemID string, in ImportMedia
 	if strings.TrimSpace(in.Title) == "" || (len(in.Transcript) == 0 && strings.TrimSpace(in.URL) == "") {
 		return nil, apperr.ErrBadRequest
 	}
+	if err := validateMediaCues(in.Transcript); err != nil {
+		return nil, err
+	}
 	lang := strings.TrimSpace(in.Language)
 	if lang == "" {
 		lang = "en"
@@ -648,6 +658,11 @@ func (s *Service) UpdateMedia(ctx context.Context, itemID string, in ImportMedia
 	}
 	payloadMap := map[string]any{}
 	_ = json.Unmarshal(existing.Payload, &payloadMap)
+	// A published standalone recording must first be withdrawn before the
+	// general editor can replace its source, cues or review evidence.
+	if payloadMap["published"] == true && (existing.Kind == coursedomain.KindVideo || existing.Kind == coursedomain.KindMusic || existing.Kind == coursedomain.KindPodcast) {
+		return nil, ErrMediaPublicationReview
+	}
 	// Imported source text, audio and accepted timing are immutable through the
 	// general editor. Purpose-built CAS endpoints handle timing/translation.
 	if sourceID, _ := payloadMap["source_id"].(string); sourceID != "" {
@@ -685,9 +700,10 @@ func (s *Service) UpdateMedia(ctx context.Context, itemID string, in ImportMedia
 	payloadMap["title"] = strings.TrimSpace(in.Title)
 	payloadMap["artist"] = strings.TrimSpace(in.Artist)
 	payloadMap["audio_language"] = strings.TrimSpace(in.AudioLanguage)
-	if existing.Kind == coursedomain.KindMusic || existing.Kind == coursedomain.KindVideo {
+	if existing.Kind == coursedomain.KindMusic || existing.Kind == coursedomain.KindVideo || existing.Kind == coursedomain.KindPodcast {
 		payloadMap["rights_reference"] = strings.TrimSpace(in.RightsReference)
 		payloadMap["rights_approved"] = in.RightsApproved
+		payloadMap["auto_publish"] = in.AutoPublish
 	}
 	payloadMap["language"] = lang
 	payloadMap["level"] = strings.TrimSpace(in.CEFR)

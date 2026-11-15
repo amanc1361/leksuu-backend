@@ -2,7 +2,7 @@ import copy
 import unittest
 
 from media_automation import (accept_source, apply_translations, identity, next_stage, translation_input, media_source, source_input,
-                              source_assessment, translation_assessment, translation_hash)
+                              source_assessment, translation_assessment, translation_hash, automatic_publication_check)
 
 
 def cue(text="Hello there", start=1, end=2):
@@ -73,13 +73,14 @@ class AutomaticPreparationTest(unittest.TestCase):
         self.assertNotIn("editorial_review", updated["transcript"][1])
 
     def test_translation_checks_reject_wrong_script_and_changed_meaning(self):
-        self.assertTrue(translation_assessment("Hello there", "سلام دوست", "Hello there")["passed"])
+        self.assertTrue(translation_assessment("Hello there", "سلام دوست", "Hello there", independent=True)["passed"])
+        self.assertFalse(translation_assessment("Hello there", "سلام دوست", "Hello there")["passed"])
         self.assertFalse(translation_assessment("Hello there", "Hello there", "Hello there")["passed"])
         self.assertFalse(translation_assessment("Hello there", "سلام دوست", "Very different meaning")["passed"])
 
     def test_automatic_translation_applies_once_and_preserves_human_approvals(self):
         payload = {"published": False, "transcript": [cue()]}
-        result = {"translations": [{"paragraph": 1, "text": "Hello there", "translation": "سلام دوست", "automatic_check": {"passed": True}}]}
+        result = {"translations": [{"paragraph": 1, "text": "Hello there", "translation": "سلام دوست", "automatic_check": {"passed": True, "independent_model": True}}]}
         updated = apply_translations(payload, result, "fa", "job")
         self.assertEqual(updated["translation_status"]["fa"], "auto_approved")
         again = apply_translations(updated, result, "fa", "job")
@@ -133,6 +134,31 @@ class AutomaticPreparationTest(unittest.TestCase):
                   "exceptions": [{"candidate_start": 0, "candidate_end": 1, "reasons": ["possible_missing_words"]}]}
         checked = accept_source(payload, result, "job")
         self.assertEqual(next_stage("podcast", checked), ("translate", "fa"))
+
+    def test_publication_requires_opt_in_rights_and_current_evidence(self):
+        payload = {"published": False, "auto_publish": True, "rights_approved": True,
+                   "rights_reference": "licensed fixture", "url": "/media/test.wav", "language": "en",
+                   "transcript": [cue()]}
+        payload = accept_source(payload, {"automatic_source_check": source_assessment([cue()], witness(), 10)}, "source-job")
+        for language in ("fa", "ckb"):
+            payload = apply_translations(payload, {"translations": [{"paragraph": 1, "text": "Hello there",
+                "translation": "سلام دوست", "automatic_check": {"passed": True,
+                "independent_model": True}}]}, language, language + "-job")
+        self.assertEqual(automatic_publication_check("podcast", payload), [])
+        for key, value in (("auto_publish", False), ("rights_approved", False), ("rights_reference", "")):
+            changed = copy.deepcopy(payload)
+            changed[key] = value
+            self.assertTrue(automatic_publication_check("podcast", changed))
+        changed = copy.deepcopy(payload)
+        changed["transcript"][0]["translation"]["ckb"] = "changed"
+        self.assertIn("ckb_verification_required", automatic_publication_check("podcast", changed))
+        changed = copy.deepcopy(payload)
+        changed["transcript"][0]["start"] = 5
+        self.assertIn("source_verification_required", automatic_publication_check("podcast", changed))
+        changed = copy.deepcopy(payload)
+        changed["transcript"].append(copy.deepcopy(changed["transcript"][0]))
+        self.assertIn("stable_cue_ids_required", automatic_publication_check("podcast", changed))
+        self.assertIn("hls_required", automatic_publication_check("music", payload))
 
 
 if __name__ == "__main__":
