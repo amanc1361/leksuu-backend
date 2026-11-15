@@ -640,6 +640,7 @@ func (h *Handler) ImportMedia(w http.ResponseWriter, r *http.Request) {
 		AudioLanguage   string             `json:"audio_language"`
 		RightsReference string             `json:"rights_reference"`
 		RightsApproved  bool               `json:"rights_approved"`
+		AutoPublish     bool               `json:"auto_publish"`
 		LevelVerified   bool               `json:"level_verified"`
 		Language        string             `json:"language"`
 		CEFR            string             `json:"cefr"`
@@ -656,7 +657,7 @@ func (h *Handler) ImportMedia(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	it, err := h.svc.ImportMedia(r.Context(), usecase.ImportMediaInput{
-		Kind: in.Kind, Title: in.Title, Artist: in.Artist, AudioLanguage: in.AudioLanguage, RightsReference: in.RightsReference, RightsApproved: in.RightsApproved, LevelVerified: in.LevelVerified, Language: in.Language, CEFR: in.CEFR, URL: in.URL, Cover: in.Cover, Transcript: in.Transcript,
+		Kind: in.Kind, Title: in.Title, Artist: in.Artist, AudioLanguage: in.AudioLanguage, RightsReference: in.RightsReference, RightsApproved: in.RightsApproved, AutoPublish: in.AutoPublish, LevelVerified: in.LevelVerified, Language: in.Language, CEFR: in.CEFR, URL: in.URL, Cover: in.Cover, Transcript: in.Transcript,
 		SourceID: in.SourceID, SourceURL: in.SourceURL, Attribution: in.Attribution, License: in.License,
 	})
 	if err != nil {
@@ -685,6 +686,7 @@ func (h *Handler) UpdateMedia(w http.ResponseWriter, r *http.Request) {
 		AudioLanguage   string             `json:"audio_language"`
 		RightsReference string             `json:"rights_reference"`
 		RightsApproved  bool               `json:"rights_approved"`
+		AutoPublish     bool               `json:"auto_publish"`
 		LevelVerified   bool               `json:"level_verified"`
 		Language        string             `json:"language"`
 		CEFR            string             `json:"cefr"`
@@ -701,7 +703,7 @@ func (h *Handler) UpdateMedia(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	it, err := h.svc.UpdateMedia(r.Context(), r.PathValue("id"), usecase.ImportMediaInput{
-		Title: in.Title, Artist: in.Artist, AudioLanguage: in.AudioLanguage, RightsReference: in.RightsReference, RightsApproved: in.RightsApproved, LevelVerified: in.LevelVerified, Language: in.Language, CEFR: in.CEFR, URL: in.URL, Cover: in.Cover, Transcript: in.Transcript,
+		Title: in.Title, Artist: in.Artist, AudioLanguage: in.AudioLanguage, RightsReference: in.RightsReference, RightsApproved: in.RightsApproved, AutoPublish: in.AutoPublish, LevelVerified: in.LevelVerified, Language: in.Language, CEFR: in.CEFR, URL: in.URL, Cover: in.Cover, Transcript: in.Transcript,
 		SourceID: in.SourceID, SourceURL: in.SourceURL, Attribution: in.Attribution, License: in.License,
 	})
 	if err != nil {

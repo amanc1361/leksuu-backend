@@ -63,3 +63,35 @@ func TestMediaCueReviewPreservesApprovedDataAndRejectsStaleEdits(t *testing.T) {
 		t.Fatalf("review preservation failed: %+v", cue)
 	}
 }
+
+func TestPodcastDraftGetsStableCueIDAndRequiresHumanReview(t *testing.T) {
+	ctx := authn.NewContext(context.Background(), authn.Principal{Subject: "podcast-reviewer", Roles: []string{"admin"}})
+	svc := NewService(courserepo.NewMemoryCourseRepo(), nil)
+	start, end := 0.0, 2.0
+	item, err := svc.ImportMedia(ctx, ImportMediaInput{
+		Kind: "podcast", Title: "Fixture episode", URL: "https://example.invalid/episode.mp3",
+		RightsApproved: true, RightsReference: "disposable fixture",
+		Transcript: []MediaCue{{Start: &start, End: &end, Text: "Welcome", Speaker: "Host",
+			Translation: map[string]string{"fa": "سلام", "ckb": "سڵاو"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		Transcript []MediaCue `json:"transcript"`
+	}
+	if err := json.Unmarshal(item.Payload, &payload); err != nil || len(payload.Transcript) != 1 || payload.Transcript[0].CueID == "" || payload.Transcript[0].Speaker != "Host" {
+		t.Fatalf("podcast cue identity or speaker lost: %+v %v", payload, err)
+	}
+	if _, err := svc.SetMediaPublished(ctx, item.ID, true); !errors.Is(err, ErrMediaPublicationReview) {
+		t.Fatalf("unreviewed podcast published: %v", err)
+	}
+	for revision, action := range []string{"source_approve", "fa_approve", "ckb_approve"} {
+		if err := svc.ReviewMediaCue(ctx, item.ID, MediaCueReviewInput{CueID: payload.Transcript[0].CueID, ExpectedRevision: revision, Action: action}); err != nil {
+			t.Fatalf("%s: %v", action, err)
+		}
+	}
+	if _, err := svc.SetMediaPublished(ctx, item.ID, true); err != nil {
+		t.Fatalf("reviewed podcast could not publish: %v", err)
+	}
+}

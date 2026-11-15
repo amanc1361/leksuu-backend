@@ -187,6 +187,20 @@ persistent model volume and install the MADLAD translation model using
 `worker/translation_model_setup.py` before processing real uploads. Missing
 model/dependency errors remain visible instead of passing checks.
 
+New Film, Music, and Podcast uploads can create a queued draft immediately after
+the file upload. Automatic publication is disabled by default with
+`MEDIA_JOBS_AUTO_PUBLICATION_ENABLED=false`. It also requires the item's explicit
+`auto_publish` choice, verified rights and a rights reference, a passing second
+speech-recognizer check, current per-cue timing, complete Persian and Sorani
+translations, and HLS for Film/Music. Configure a **distinct** local CTranslate2
+model at `MEDIA_JOBS_TRANSLATION_VERIFICATION_MODEL_DIR` for the backtranslation
+check; it must support English as a target and must not be the production
+translation model directory. Without it, generated translations stay drafts.
+The roundtrip/script check cannot prove idioms or Sorani fluency, so enable
+publication only after independent reference-fixture evaluation of the selected
+models and staging acceptance. Failed checks leave a recorded unpublished
+exception. No worker infers media publication rights from a file upload.
+
 Set `MEDIA_PUBLIC_URL` to the public site origin so the worker can map stored
 URLs to `http://api:8080`; external media origins are rejected. The `media-models`
 volume keeps downloaded models between restarts. `MEDIA_JOBS_MAX_BYTES` caps

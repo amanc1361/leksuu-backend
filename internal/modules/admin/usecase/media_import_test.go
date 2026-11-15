@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	courserepo "github.com/leksuu/platform/internal/modules/course/repo"
@@ -17,7 +18,7 @@ func TestImportMediaCreatesLibraryItemInHiddenBucket(t *testing.T) {
 	it, err := svc.ImportMedia(ctx, ImportMediaInput{
 		Kind: "podcast", Title: "Daily News", Language: "en", CEFR: "B1",
 		URL:        "https://cdn/x.mp3",
-		Transcript: []MediaCue{{Start: &start, Text: "hello", Translation: map[string]string{"fa": "سلام"}}, {Text: "world"}},
+		Transcript: []MediaCue{{Start: &start, Text: "hello", Speaker: "Host", Translation: map[string]string{"fa": "سلام"}}, {Text: "world"}},
 	})
 	if err != nil {
 		t.Fatalf("import: %v", err)
@@ -34,6 +35,39 @@ func TestImportMediaCreatesLibraryItemInHiddenBucket(t *testing.T) {
 	if total != 0 || len(items) != 0 {
 		t.Fatalf("draft leaked into library total=%d len=%d", total, len(items))
 	}
+	if _, err := svc.SetMediaPublished(ctx, it.ID, true); err == nil {
+		t.Fatal("unreviewed podcast became visible")
+	}
+	var reviewed map[string]any
+	if err := json.Unmarshal(it.Payload, &reviewed); err != nil {
+		t.Fatal(err)
+	}
+	reviewed["rights_approved"] = true
+	reviewed["rights_reference"] = "disposable test recording"
+	for index, raw := range reviewed["transcript"].([]any) {
+		cue := raw.(map[string]any)
+		cue["start"] = float64(index * 2)
+		cue["end"] = float64(index*2 + 1)
+		cue["timing_status"] = "approved"
+		cue["editorial_review"] = map[string]any{"decision": "approved"}
+		translations, _ := cue["translation"].(map[string]any)
+		if translations == nil {
+			translations = map[string]any{}
+		}
+		if translations["fa"] == nil {
+			translations["fa"] = "test-fa"
+		}
+		translations["ckb"] = "test-ckb"
+		cue["translation"] = translations
+		cue["translation_review"] = map[string]any{"fa": "approved", "ckb": "approved"}
+	}
+	it.Payload, err = json.Marshal(reviewed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpdateItem(ctx, it); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := svc.SetMediaPublished(ctx, it.ID, true); err != nil {
 		t.Fatal(err)
 	}
@@ -45,11 +79,12 @@ func TestImportMediaCreatesLibraryItemInHiddenBucket(t *testing.T) {
 		Title, Language, URL string
 		Transcript           []struct {
 			Text        string
+			Speaker     string
 			Translation map[string]string
 		}
 	}
 	_ = json.Unmarshal(items[0].Payload, &p)
-	if p.Title != "Daily News" || p.URL != "https://cdn/x.mp3" || p.Language != "en" || len(p.Transcript) != 2 {
+	if p.Title != "Daily News" || p.URL != "https://cdn/x.mp3" || p.Language != "en" || len(p.Transcript) != 2 || p.Transcript[0].Speaker != "Host" {
 		t.Fatalf("payload mismatch: %+v", p)
 	}
 	if p.Transcript[0].Translation["fa"] != "سلام" {
@@ -85,16 +120,23 @@ func TestImportMediaCreatesLibraryItemInHiddenBucket(t *testing.T) {
 		}
 	}
 
-	// Editing in place rewrites the payload (title + transcript) without moving it.
+	// A published recording must be withdrawn before replacing its reviewed cues.
+	if _, err := svc.UpdateMedia(ctx, it.ID, ImportMediaInput{Kind: "podcast", Title: "Changed while public", URL: "https://cdn/y.mp3", Transcript: []MediaCue{{Text: "edited"}}}); !errors.Is(err, ErrMediaPublicationReview) {
+		t.Fatalf("published source changed without review: %v", err)
+	}
+	if _, err := svc.SetMediaPublished(ctx, it.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	// Editing in place rewrites the draft payload without moving it.
 	if _, err := svc.UpdateMedia(ctx, it.ID, ImportMediaInput{
 		Kind: "podcast", Title: "Renamed News", Language: "en", CEFR: "B2",
 		URL: "https://cdn/y.mp3", Transcript: []MediaCue{{Text: "edited"}},
 	}); err != nil {
 		t.Fatalf("update: %v", err)
 	}
-	items2, total2, _ := repo.MediaItems(ctx, "podcast", "en", 50, 0)
-	if total2 != 1 {
-		t.Fatalf("update changed item count: %d", total2)
+	items2, err := svc.AdminMedia(ctx, "podcast")
+	if err != nil || len(items2) != 1 {
+		t.Fatalf("updated draft missing: %v, count %d", err, len(items2))
 	}
 	var q struct{ Title, URL string }
 	for _, m := range items2 {
@@ -209,6 +251,7 @@ func TestImportMediaRejectsBadInput(t *testing.T) {
 		{Kind: "podcast", Title: "", URL: "u", Transcript: []MediaCue{{Text: "a"}}}, // no title
 		{Kind: "podcast", Title: "x", URL: "", Transcript: []MediaCue{{Text: "a"}}}, // no url
 		{Kind: "story", Title: "x", URL: "", Transcript: nil},                       // no audio or transcript
+		{Kind: "podcast", Title: "x", URL: "u", Transcript: []MediaCue{{CueID: "same", Text: "a"}, {CueID: "same", Text: "b"}}},
 	}
 	for i, c := range cases {
 		if _, err := svc.ImportMedia(ctx, c); err == nil {
